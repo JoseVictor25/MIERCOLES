@@ -115,8 +115,24 @@ def parse_xmi(xmi_data) -> dict:
     # 3. Cache de nombres y atributos en extensiones de Enterprise Architect (<elements><element><attributes>...)
     ea_extension_attrs = {}
     ea_extension_names = {}
+    ea_assoc_classes = set()
+    ea_assoc_class_links = {}  # connector_id -> assoc_class_id
+    owned_end_types = {}       # end_id -> participant_class_id
+
     for el in root.iter():
         lname = get_local_name(el.tag)
+        if lname in ['ownedEnd', 'AssociationEnd', 'memberEnd']:
+            e_id = get_id(el)
+            t_cand = el.attrib.get('type')
+            if not t_cand:
+                for sub in el.iter():
+                    sub_ref = get_idref(sub)
+                    if sub_ref:
+                        t_cand = sub_ref
+                        break
+            if e_id and t_cand:
+                owned_end_types[e_id] = t_cand
+
         if lname == 'element':
             ref_id = get_idref(el) or get_id(el)
             name_val = el.attrib.get('name')
@@ -124,7 +140,28 @@ def parse_xmi(xmi_data) -> dict:
                 ea_extension_names[ref_id] = name_val
 
             t = get_type_attr(el) or el.attrib.get('ea_eleType', '')
-            if ref_id and ('Class' in t or t == 'element'):
+            
+            # Detectar si este elemento es una AssociationClass en EA
+            is_ac = False
+            if 'AssociationClass' in t or t == 'associationclass':
+                is_ac = True
+            for child in el:
+                clname = get_local_name(child.tag)
+                if clname == 'properties' and child.attrib.get('sType') in ['AssociationClass', 'Association Class']:
+                    is_ac = True
+                elif clname == 'model' and child.attrib.get('ea_eleType') in ['associationclass', 'association_class']:
+                    is_ac = True
+                elif clname == 'extendedProperties' and child.attrib.get('associationclass'):
+                    is_ac = True
+            if is_ac and ref_id:
+                ea_assoc_classes.add(ref_id)
+                for child in el.iter():
+                    if get_local_name(child.tag) in ['Association', 'association']:
+                        conn_id = get_id(child) or get_idref(child)
+                        if conn_id:
+                            ea_assoc_class_links[conn_id] = ref_id
+
+            if ref_id and ('Class' in t or t in ['element', 'associationclass'] or is_ac):
                 attrs_for_el = []
                 for child in el.iter():
                     if get_local_name(child.tag) == 'attribute':
@@ -343,7 +380,7 @@ def parse_xmi(xmi_data) -> dict:
     edges = []
     seen_edges = set()
 
-    def add_edge(src_raw, tgt_raw, rel_type="association", label="", src_mult="", tgt_mult=""):
+    def add_edge(src_raw, tgt_raw, rel_type="association", label="", src_mult="", tgt_mult="", assoc_class_id=None):
         src = class_id_map.get(src_raw) or class_name_map.get(src_raw)
         tgt = class_id_map.get(tgt_raw) or class_name_map.get(tgt_raw)
         if not src:
@@ -359,21 +396,36 @@ def parse_xmi(xmi_data) -> dict:
 
         if not src or not tgt or src == tgt:
             return
+
+        # Si ya existe una arista entre los mismos extremos, actualizar associationClassId si vino ahora
+        for existing in edges:
+            e_s = existing.get("source")
+            e_t = existing.get("target")
+            if (e_s == src and e_t == tgt) or (e_s == tgt and e_t == src):
+                if assoc_class_id and not existing.get("data", {}).get("associationClassId"):
+                    existing["data"]["associationClassId"] = assoc_class_id
+                return
+
         edge_key = (src, tgt, rel_type, label)
         if edge_key in seen_edges:
             return
         seen_edges.add(edge_key)
+
+        edge_data = {
+            "relation_type": rel_type,
+            "label": label,
+            "sourceMultiplicity": str(src_mult).replace("-1", "*") if src_mult else "",
+            "targetMultiplicity": str(tgt_mult).replace("-1", "*") if tgt_mult else ""
+        }
+        if assoc_class_id:
+            edge_data["associationClassId"] = assoc_class_id
+
         edges.append({
             "id": f"edge-{uuid.uuid4().hex[:8]}",
             "source": src,
             "target": tgt,
             "type": "umlEdge",
-            "data": {
-                "relation_type": rel_type,
-                "label": label,
-                "sourceMultiplicity": str(src_mult).replace("-1", "*") if src_mult else "",
-                "targetMultiplicity": str(tgt_mult).replace("-1", "*") if tgt_mult else ""
-            }
+            "data": edge_data
         })
 
     # 5a. Extensión de conectores de Enterprise Architect (<connectors><connector>)
@@ -460,9 +512,29 @@ def parse_xmi(xmi_data) -> dict:
                     src_id, tgt_id = tgt_id, src_id
                     src_mult, tgt_mult = tgt_mult, src_mult
 
-                add_edge(src_id, tgt_id, rel_type=r_type, label=rel_label, src_mult=src_mult, tgt_mult=tgt_mult)
+                # Detectar si este connector tiene una Association Class asociada en EA
+                assoc_class_ref = None
+                if props_el is not None:
+                    assoc_class_ref = props_el.attrib.get('associationclass') or props_el.attrib.get('associationClass')
+                if not assoc_class_ref:
+                    for c in el:
+                        clname = get_local_name(c.tag)
+                        if clname in ['extendedProperties', 'properties', 'model']:
+                            cand = c.attrib.get('associationclass') or c.attrib.get('associationClass')
+                            if cand:
+                                assoc_class_ref = cand
+                                break
+                conn_raw_id = get_id(el) or get_idref(el)
+                if not assoc_class_ref and conn_raw_id in ea_assoc_class_links:
+                    assoc_class_ref = ea_assoc_class_links[conn_raw_id]
 
-    # 5b. Relaciones UML Estándar (<UML:Association>, <UML:Generalization>, <UML:Dependency>)
+                assoc_class_rf_id = None
+                if assoc_class_ref:
+                    assoc_class_rf_id = class_id_map.get(assoc_class_ref) or class_name_map.get(assoc_class_ref)
+
+                add_edge(src_id, tgt_id, rel_type=r_type, label=rel_label, src_mult=src_mult, tgt_mult=tgt_mult, assoc_class_id=assoc_class_rf_id)
+
+    # 5b. Relaciones UML Estándar (<UML:Association>, <UML:Generalization>, <UML:Dependency>, <UML:AssociationClass>)
     for el in root.iter():
         lname = get_local_name(el.tag)
         t = get_type_attr(el)
@@ -482,6 +554,47 @@ def parse_xmi(xmi_data) -> dict:
             if sub and sup:
                 add_edge(sub, sup, rel_type="dependency", label=rel_label)
 
+        # AssociationClass estándar (OMG UML 2.1)
+        elif lname == 'AssociationClass' or t in ['uml:AssociationClass', 'AssociationClass']:
+            ac_raw_id = get_id(el)
+            ac_rf_id = class_id_map.get(ac_raw_id)
+            ends = []
+            for child in el.iter():
+                clname = get_local_name(child.tag)
+                if clname in ['ownedEnd', 'AssociationEnd', 'memberEnd']:
+                    ends.append(child)
+
+            if len(ends) >= 2:
+                def get_ac_participant(end_node):
+                    p = end_node.attrib.get("type") or end_node.attrib.get("participant")
+                    if p and (p in class_id_map or p in class_name_map):
+                        return p
+                    for desc in end_node.iter():
+                        ref = get_idref(desc)
+                        if ref and (ref in class_id_map or ref in class_name_map):
+                            return ref
+                    end_idref = get_idref(end_node)
+                    if end_idref and end_idref in owned_end_types:
+                        cand = owned_end_types[end_idref]
+                        if cand in class_id_map or cand in class_name_map:
+                            return cand
+                    return p
+
+                src = get_ac_participant(ends[0])
+                tgt = get_ac_participant(ends[1])
+                src_mult = ""
+                tgt_mult = ""
+                for c in ends[0].iter():
+                    if get_local_name(c.tag) in ['lowerValue', 'upperValue']:
+                        src_mult = ends[0].attrib.get("multiplicity", "")
+                for c in ends[1].iter():
+                    if get_local_name(c.tag) in ['lowerValue', 'upperValue']:
+                        tgt_mult = ends[1].attrib.get("multiplicity", "")
+
+                rel_label = el.attrib.get("name", "")
+                if src and tgt:
+                    add_edge(src, tgt, rel_type="association", label=rel_label, src_mult=src_mult, tgt_mult=tgt_mult, assoc_class_id=ac_rf_id)
+
         # Asociaciones estándar
         elif lname in ['Association', 'association'] or t in ['uml:Association', 'Association']:
             ends = []
@@ -500,6 +613,11 @@ def parse_xmi(xmi_data) -> dict:
                         ref = get_idref(desc)
                         if ref and (ref in class_id_map or ref in class_name_map):
                             return ref
+                    end_idref = get_idref(end_node)
+                    if end_idref and end_idref in owned_end_types:
+                        cand = owned_end_types[end_idref]
+                        if cand in class_id_map or cand in class_name_map:
+                            return cand
                     return p
 
                 src = get_participant(ends[0])

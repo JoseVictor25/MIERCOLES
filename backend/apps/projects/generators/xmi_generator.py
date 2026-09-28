@@ -111,6 +111,15 @@ def generate_xmi(diagram_data: dict, project_name: str) -> str:
     inheritance_map = {}
     edge_ea_map = {}
     
+    # Mapeo de Association Classes: class_id -> edge y edge_id -> class_id
+    assoc_class_to_edge = {}
+    edge_to_assoc_class = {}
+    for edge in edges:
+        assoc_cid = edge.get("data", {}).get("associationClassId")
+        if assoc_cid:
+            assoc_class_to_edge[str(assoc_cid)] = edge
+            edge_to_assoc_class[str(edge.get("id"))] = str(assoc_cid)
+
     for edge in edges:
         edge_id = str(edge.get("id"))
         edge_ea_id = make_ea_id("EAID_CONN", edge_id)
@@ -139,12 +148,24 @@ def generate_xmi(diagram_data: dict, project_name: str) -> str:
         data = node.get("data", {})
         c_name = name_map[raw_id]
         
-        cls_el = ET.SubElement(pkg_el, "packagedElement", {
-            "xmi:type": "uml:Class",
+        is_assoc_class = raw_id in assoc_class_to_edge
+        pkg_type = "uml:AssociationClass" if is_assoc_class else "uml:Class"
+        
+        cls_attribs = {
+            "xmi:type": pkg_type,
             "xmi:id": ea_id,
             "name": c_name,
             "visibility": "public"
-        })
+        }
+        
+        if is_assoc_class:
+            matched_edge = assoc_class_to_edge[raw_id]
+            matched_edge_id = str(matched_edge.get("id"))
+            matched_edge_ea_id = edge_ea_map.get(matched_edge_id)
+            if matched_edge_ea_id:
+                cls_attribs["memberEnd"] = f"{matched_edge_ea_id}_src {matched_edge_ea_id}_dst"
+                
+        cls_el = ET.SubElement(pkg_el, "packagedElement", cls_attribs)
         
         # Generalizaciones hijas
         for edge_ea_id, parent_ea_id in inheritance_map.get(ea_id, []):
@@ -328,6 +349,7 @@ def generate_xmi(diagram_data: dict, project_name: str) -> str:
         raw_id = str(node.get("id"))
         ea_id = id_map[raw_id]
         c_name = name_map[raw_id]
+        is_assoc_class = raw_id in assoc_class_to_edge
         
         c_el = ET.SubElement(elems_ext, "element", {
             "xmi:idref": ea_id,
@@ -338,18 +360,38 @@ def generate_xmi(diagram_data: dict, project_name: str) -> str:
         ET.SubElement(c_el, "model", {
             "package": pkg_id,
             "tpos": "0",
-            "ea_eleType": "element"
+            "ea_eleType": "associationclass" if is_assoc_class else "element"
         })
         ET.SubElement(c_el, "properties", {
             "isSpecification": "false",
-            "sType": "Class",
+            "sType": "AssociationClass" if is_assoc_class else "Class",
             "nType": "0",
             "scope": "public"
         })
-        ET.SubElement(c_el, "extendedProperties", {
+        ext_props = {
             "tagged": "0",
             "package_name": clean_name
-        })
+        }
+        if is_assoc_class:
+            ext_props["associationclass"] = ea_id
+        ET.SubElement(c_el, "extendedProperties", ext_props)
+        
+        # Enlazar en <links> con la asociación si es AssociationClass
+        if is_assoc_class:
+            matched_edge = assoc_class_to_edge[raw_id]
+            matched_edge_id = str(matched_edge.get("id"))
+            matched_edge_ea_id = edge_ea_map.get(matched_edge_id)
+            src_raw = str(matched_edge.get("source")).split("-source")[0]
+            tgt_raw = str(matched_edge.get("target")).split("-target")[0]
+            src_ea = id_map.get(src_raw)
+            tgt_ea = id_map.get(tgt_raw)
+            if matched_edge_ea_id and src_ea and tgt_ea:
+                links_el = ET.SubElement(c_el, "links")
+                ET.SubElement(links_el, "Association", {
+                    "xmi:id": matched_edge_ea_id,
+                    "start": src_ea,
+                    "end": tgt_ea
+                })
         
         # Atributos en la extensión nativa de EA (garantiza tipo nativo, collection=false y duplicates=0 para suprimir {bag})
         data = node.get("data", {})
@@ -446,10 +488,15 @@ def generate_xmi(diagram_data: dict, project_name: str) -> str:
         src_mult = edge.get("data", {}).get("sourceMultiplicity", "")
         tgt_mult = edge.get("data", {}).get("targetMultiplicity", "")
         
+        assoc_class_raw_id = edge_to_assoc_class.get(edge_id)
+        assoc_class_ea_id = id_map.get(assoc_class_raw_id) if assoc_class_raw_id else None
+        
         ea_type = "Association"
         src_agg = "none"
         direction = "Unspecified"
-        if rel_type == "inheritance":
+        if assoc_class_ea_id:
+            ea_type = "Association Class"
+        elif rel_type == "inheritance":
             ea_type = "Generalization"
             direction = "Source -> Destination"
         elif rel_type == "dependency":
@@ -476,7 +523,15 @@ def generate_xmi(diagram_data: dict, project_name: str) -> str:
         ET.SubElement(target_sub, "model", {"name": name_map.get(tgt_raw, ""), "type": "Class"})
         ET.SubElement(target_sub, "type", {"aggregation": "none", "multiplicity": str(tgt_mult)})
         
-        ET.SubElement(conn, "properties", {"name": label, "ea_type": ea_type, "direction": direction})
+        conn_props = {"name": label, "ea_type": ea_type, "direction": direction}
+        conn_ext = {}
+        if assoc_class_ea_id:
+            conn_props["associationclass"] = assoc_class_ea_id
+            conn_ext["associationclass"] = assoc_class_ea_id
+            
+        ET.SubElement(conn, "properties", conn_props)
+        if conn_ext:
+            ET.SubElement(conn, "extendedProperties", conn_ext)
 
     # 3c. Diagrams: Crea el diagrama nativo dentro del paquete con los elementos y conectores ubicados
     diags_ext = ET.SubElement(ext, "diagrams")

@@ -78,6 +78,34 @@ def generate_xmi(diagram_data: dict, project_name: str) -> str:
         "visibility": "public"
     })
     
+    # -------------------------------------------------------------------
+    # Recolectar todos los tipos primitivos únicos usados en el diagrama
+    # y definirlos como PrimitiveType dentro del paquete para que EA
+    # los resuelva correctamente (evita que muestre {bag}).
+    # -------------------------------------------------------------------
+    primitive_type_map = {}  # nombre_tipo -> xmi:id del PrimitiveType
+    for node in nodes:
+        data = node.get("data", {})
+        for attr in data.get("attributes", []):
+            t = str(attr.get("data_type", "String") or "String").strip()
+            if t and t not in primitive_type_map:
+                pt_id = make_ea_id("EAPT", t)
+                primitive_type_map[t] = pt_id
+        for meth in data.get("methods", []):
+            t = str(meth.get("return_type", "void") or "void").strip()
+            if t and t not in primitive_type_map:
+                pt_id = make_ea_id("EAPT", t)
+                primitive_type_map[t] = pt_id
+
+    # Declarar cada tipo primitivo como packagedElement uml:PrimitiveType
+    for pt_name, pt_id in primitive_type_map.items():
+        ET.SubElement(pkg_el, "packagedElement", {
+            "xmi:type": "uml:PrimitiveType",
+            "xmi:id": pt_id,
+            "name": pt_name,
+            "visibility": "public"
+        })
+
     # Mapeo de herencias para asignarlas a las clases hijas
     inheritance_map = {}
     edge_ea_map = {}
@@ -130,16 +158,21 @@ def generate_xmi(diagram_data: dict, project_name: str) -> str:
             a_name = attr.get("name", "")
             if not a_name:
                 continue
-            a_type = attr.get("data_type", "String")
+            a_type_str = str(attr.get("data_type", "String") or "String").strip()
             a_vis = attr.get("visibility", "-")
             vis_str = "public" if a_vis == "+" else "protected" if a_vis == "#" else "private"
             
-            ET.SubElement(cls_el, "ownedAttribute", {
+            # Referenciar el PrimitiveType por su ID para que EA lo resuelva correctamente
+            a_type_id = primitive_type_map.get(a_type_str, make_ea_id("EAPT", a_type_str))
+            attr_el = ET.SubElement(cls_el, "ownedAttribute", {
                 "xmi:type": "uml:Property",
                 "xmi:id": f"{ea_id}_ATTR_{hashlib.md5(a_name.encode('utf-8')).hexdigest()[:8]}",
                 "name": a_name,
                 "visibility": vis_str,
-                "type": a_type
+            })
+            # Elemento <type> que referencia al PrimitiveType: formato estándar UML 2.1
+            ET.SubElement(attr_el, "type", {
+                "xmi:idref": a_type_id
             })
             
         # Métodos / Operaciones
@@ -147,21 +180,24 @@ def generate_xmi(diagram_data: dict, project_name: str) -> str:
             m_name = meth.get("name", "")
             if not m_name:
                 continue
-            m_type = meth.get("return_type", "void")
+            m_type_str = str(meth.get("return_type", "void") or "void").strip()
             m_vis = meth.get("visibility", "+")
             vis_str = "public" if m_vis == "+" else "protected" if m_vis == "#" else "private"
             
+            m_type_id = primitive_type_map.get(m_type_str, make_ea_id("EAPT", m_type_str))
             op_el = ET.SubElement(cls_el, "ownedOperation", {
                 "xmi:type": "uml:Operation",
                 "xmi:id": f"{ea_id}_OP_{hashlib.md5(m_name.encode('utf-8')).hexdigest()[:8]}",
                 "name": m_name,
                 "visibility": vis_str
             })
-            ET.SubElement(op_el, "ownedParameter", {
+            ret_el = ET.SubElement(op_el, "ownedParameter", {
                 "xmi:type": "uml:Parameter",
                 "xmi:id": f"{ea_id}_RET_{hashlib.md5(m_name.encode('utf-8')).hexdigest()[:8]}",
                 "direction": "return",
-                "type": m_type
+            })
+            ET.SubElement(ret_el, "type", {
+                "xmi:idref": m_type_id
             })
 
     # 2. Relaciones UML a nivel paquete (Asociaciones, Dependencias, Realizaciones)

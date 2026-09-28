@@ -70,11 +70,20 @@ def parse_xmi(xmi_data) -> dict:
     datatypes = {}
     for el in root.iter():
         lname = get_local_name(el.tag)
+        # Capturar tanto DataType/PrimitiveType independientes
+        # como packagedElement xmi:type="uml:PrimitiveType" (generados por nuestro exportador)
         if lname in ['DataType', 'PrimitiveType']:
             dt_id = get_id(el)
             dt_name = el.attrib.get("name")
             if dt_id and dt_name:
                 datatypes[dt_id] = dt_name
+        elif lname == 'packagedElement':
+            t = get_type_attr(el)
+            if t in ['uml:PrimitiveType', 'PrimitiveType']:
+                dt_id = get_id(el)
+                dt_name = el.attrib.get("name")
+                if dt_id and dt_name:
+                    datatypes[dt_id] = dt_name
 
     # 2. Parseo de posiciones del diagrama (Enterprise Architect <element geometry="..."/> y StarUML <DiagramElement>)
     diagram_elements = {}
@@ -189,7 +198,13 @@ def parse_xmi(xmi_data) -> dict:
 
                 # Detección del tipo de dato
                 a_type = child.attrib.get("type")
-                if not a_type or a_type.startswith("uml:") or a_type.startswith("eaxmiid"):
+                # Si el tipo viene como atributo pero parece un ID de EA, resolverlo
+                if a_type and a_type in datatypes:
+                    a_type = datatypes[a_type]
+                elif a_type and (a_type.startswith("uml:") or a_type.startswith("eaxmiid")):
+                    a_type = None
+
+                if not a_type:
                     # 1. Revisar TaggedValue (típico en Enterprise Architect: <TaggedValue tag="type" value="int"/>)
                     for tv in child.iter():
                         if get_local_name(tv.tag) in ['TaggedValue', 'taggedValue']:
@@ -198,18 +213,26 @@ def parse_xmi(xmi_data) -> dict:
                                 a_type = tv.attrib.get("value")
                                 break
 
-                    # 2. Revisar href o referencias Classifier
+                    # 2. Revisar elemento hijo <type> con xmi:idref o href
                     if not a_type:
                         for g_child in child.iter():
                             glname = get_local_name(g_child.tag)
                             if glname == 'type' or g_child.tag.endswith('}type'):
+                                # Primero intentar xmi:idref (formato UML 2.1 con referencia a PrimitiveType)
+                                idref_val = get_idref(g_child)
+                                if idref_val and idref_val in datatypes:
+                                    a_type = datatypes[idref_val]
+                                    break
+                                # Luego intentar href (formato Eclipse/otros)
                                 href = g_child.attrib.get("href", "")
                                 if href:
                                     a_type = href.split("#")[-1]
+                                    break
                             elif glname in ['Classifier', 'classifier']:
                                 type_id = get_idref(g_child)
                                 if type_id and type_id in datatypes:
                                     a_type = datatypes[type_id]
+                                    break
 
                 if not a_type:
                     a_type = "String"

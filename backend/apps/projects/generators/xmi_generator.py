@@ -169,6 +169,11 @@ def generate_xmi(diagram_data: dict, project_name: str) -> str:
                 "xmi:id": f"{ea_id}_ATTR_{hashlib.md5(a_name.encode('utf-8')).hexdigest()[:8]}",
                 "name": a_name,
                 "visibility": vis_str,
+                # isUnique=true + isOrdered=false evita que EA muestre "{bag}"
+                # En UML 2.1 el default de isUnique es false (bag), por eso hay que
+                # declararlo explícitamente para que EA muestre el tipo limpio.
+                "isUnique": "true",
+                "isOrdered": "false",
             })
             # Elemento <type> que referencia al PrimitiveType: formato estándar UML 2.1
             ET.SubElement(attr_el, "type", {

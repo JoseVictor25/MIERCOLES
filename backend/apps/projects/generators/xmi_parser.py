@@ -71,15 +71,15 @@ def parse_xmi(xmi_data) -> dict:
     for el in root.iter():
         lname = get_local_name(el.tag)
         # Capturar tanto DataType/PrimitiveType independientes
-        # como packagedElement xmi:type="uml:PrimitiveType" (generados por nuestro exportador)
-        if lname in ['DataType', 'PrimitiveType']:
+        # como packagedElement xmi:type="uml:PrimitiveType" / "uml:DataType" (generados por exportadores)
+        if lname in ['DataType', 'PrimitiveType', 'datatype', 'primitivetype']:
             dt_id = get_id(el)
             dt_name = el.attrib.get("name")
             if dt_id and dt_name:
                 datatypes[dt_id] = dt_name
         elif lname == 'packagedElement':
             t = get_type_attr(el)
-            if t in ['uml:PrimitiveType', 'PrimitiveType']:
+            if t in ['uml:PrimitiveType', 'PrimitiveType', 'uml:DataType', 'DataType']:
                 dt_id = get_id(el)
                 dt_name = el.attrib.get("name")
                 if dt_id and dt_name:
@@ -129,15 +129,25 @@ def parse_xmi(xmi_data) -> dict:
                 for child in el.iter():
                     if get_local_name(child.tag) == 'attribute':
                         a_name = child.attrib.get('name')
-                        a_type = child.attrib.get('type') or 'String'
+                        if not a_name:
+                            continue
+                        # Buscar tipo en atributo, o en subelementos <properties type="..."> o <model type="...">
+                        a_type = child.attrib.get('type')
+                        if not a_type:
+                            for sub in child.iter():
+                                sname = get_local_name(sub.tag)
+                                if sname in ['properties', 'model']:
+                                    cand = sub.attrib.get('type') or sub.attrib.get('ea_type')
+                                    if cand and cand.strip():
+                                        a_type = cand.strip()
+                                        break
                         scope = child.attrib.get('scope', 'public').lower()
                         vis = '-' if 'priv' in scope else '+' if 'pub' in scope else '#'
-                        if a_name:
-                            attrs_for_el.append({
-                                'name': a_name,
-                                'data_type': a_type,
-                                'visibility': vis
-                            })
+                        attrs_for_el.append({
+                            'name': a_name,
+                            'data_type': a_type,
+                            'visibility': vis
+                        })
                 if attrs_for_el:
                     ea_extension_attrs[ref_id] = attrs_for_el
 
@@ -198,10 +208,14 @@ def parse_xmi(xmi_data) -> dict:
 
                 # Detección del tipo de dato
                 a_type = child.attrib.get("type")
-                # Si el tipo viene como atributo pero parece un ID de EA, resolverlo
+                # Si el tipo viene como atributo pero es un ID conocido, resolverlo
                 if a_type and a_type in datatypes:
                     a_type = datatypes[a_type]
-                elif a_type and (a_type.startswith("uml:") or a_type.startswith("eaxmiid")):
+                elif a_type and (a_type.startswith("EAJava_") or a_type.startswith("EAC_") or a_type.startswith("EACsharp_")):
+                    a_type = a_type.split("_", 1)[1]
+                elif a_type and a_type.startswith("uml:"):
+                    a_type = a_type.split(":")[-1]
+                elif a_type and a_type.startswith("eaxmiid"):
                     a_type = None
 
                 if not a_type:
@@ -209,30 +223,51 @@ def parse_xmi(xmi_data) -> dict:
                     for tv in child.iter():
                         if get_local_name(tv.tag) in ['TaggedValue', 'taggedValue']:
                             tag_name = tv.attrib.get("tag", "").lower()
-                            if tag_name in ['type', 'ea_type']:
+                            if tag_name in ['type', 'ea_type', 'datatype']:
                                 a_type = tv.attrib.get("value")
                                 break
 
-                    # 2. Revisar elemento hijo <type> con xmi:idref o href
+                    # 2. Revisar si tiene subelementos <properties> o <model> directamente
+                    if not a_type:
+                        for prop in child.iter():
+                            if get_local_name(prop.tag) in ['properties', 'model']:
+                                cand = prop.attrib.get("type") or prop.attrib.get("ea_type")
+                                if cand and cand.strip():
+                                    a_type = cand.strip()
+                                    break
+
+                    # 3. Revisar elemento hijo <type> o <Classifier>
                     if not a_type:
                         for g_child in child.iter():
                             glname = get_local_name(g_child.tag)
-                            if glname == 'type' or g_child.tag.endswith('}type'):
-                                # Primero intentar xmi:idref (formato UML 2.1 con referencia a PrimitiveType)
+                            if glname in ['type', 'Classifier', 'classifier'] or g_child.tag.endswith('}type'):
                                 idref_val = get_idref(g_child)
-                                if idref_val and idref_val in datatypes:
-                                    a_type = datatypes[idref_val]
+                                if idref_val:
+                                    if idref_val in datatypes:
+                                        a_type = datatypes[idref_val]
+                                        break
+                                    elif idref_val.startswith("EAJava_") or idref_val.startswith("EAC_") or idref_val.startswith("EACsharp_"):
+                                        a_type = idref_val.split("_", 1)[1]
+                                        break
+                                    elif idref_val in ea_extension_names:
+                                        a_type = ea_extension_names[idref_val]
+                                        break
+                                t_name = g_child.attrib.get("name")
+                                if t_name and t_name.strip():
+                                    a_type = t_name.strip()
                                     break
-                                # Luego intentar href (formato Eclipse/otros)
                                 href = g_child.attrib.get("href", "")
                                 if href:
                                     a_type = href.split("#")[-1]
                                     break
-                            elif glname in ['Classifier', 'classifier']:
-                                type_id = get_idref(g_child)
-                                if type_id and type_id in datatypes:
-                                    a_type = datatypes[type_id]
-                                    break
+
+                # 4. Enriquecer con tipo de extensión de EA si no se tiene o era String pero EA tiene algo más específico
+                if raw_id in ea_extension_attrs:
+                    ea_attrs_dict = {a['name']: a['data_type'] for a in ea_extension_attrs[raw_id] if a.get('data_type')}
+                    if a_name in ea_attrs_dict:
+                        ea_cand = ea_attrs_dict[a_name]
+                        if not a_type or (a_type == 'String' and ea_cand != 'String'):
+                            a_type = ea_cand
 
                 if not a_type:
                     a_type = "String"
@@ -251,10 +286,10 @@ def parse_xmi(xmi_data) -> dict:
                     "id": uuid.uuid4().hex[:8],
                     "name": ea_attr['name'],
                     "visibility": ea_attr['visibility'],
-                    "data_type": ea_attr['data_type']
+                    "data_type": ea_attr['data_type'] or "String"
                 })
         elif attributes and raw_id in ea_extension_attrs:
-            ea_types = {a['name']: a['data_type'] for a in ea_extension_attrs[raw_id]}
+            ea_types = {a['name']: a['data_type'] for a in ea_extension_attrs[raw_id] if a.get('data_type')}
             for a in attributes:
                 if (a['data_type'] == 'String' or not a['data_type']) and a['name'] in ea_types:
                     a['data_type'] = ea_types[a['name']]

@@ -1,3 +1,4 @@
+
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
 import datetime
@@ -164,20 +165,30 @@ def generate_xmi(diagram_data: dict, project_name: str) -> str:
             
             # Referenciar el PrimitiveType por su ID para que EA lo resuelva correctamente
             a_type_id = primitive_type_map.get(a_type_str, make_ea_id("EAPT", a_type_str))
+            attr_ea_id = f"{ea_id}_ATTR_{hashlib.md5(a_name.encode('utf-8')).hexdigest()[:8]}"
             attr_el = ET.SubElement(cls_el, "ownedAttribute", {
                 "xmi:type": "uml:Property",
-                "xmi:id": f"{ea_id}_ATTR_{hashlib.md5(a_name.encode('utf-8')).hexdigest()[:8]}",
+                "xmi:id": attr_ea_id,
                 "name": a_name,
                 "visibility": vis_str,
                 # isUnique=true + isOrdered=false evita que EA muestre "{bag}"
-                # En UML 2.1 el default de isUnique es false (bag), por eso hay que
-                # declararlo explícitamente para que EA muestre el tipo limpio.
                 "isUnique": "true",
                 "isOrdered": "false",
             })
             # Elemento <type> que referencia al PrimitiveType: formato estándar UML 2.1
             ET.SubElement(attr_el, "type", {
                 "xmi:idref": a_type_id
+            })
+            # Multiplicidad 1..1 explícita: declara que el atributo es escalar (no colección)
+            ET.SubElement(attr_el, "lowerValue", {
+                "xmi:type": "uml:LiteralInteger",
+                "xmi:id": f"{attr_ea_id}_lower",
+                "value": "1"
+            })
+            ET.SubElement(attr_el, "upperValue", {
+                "xmi:type": "uml:LiteralUnlimitedNatural",
+                "xmi:id": f"{attr_ea_id}_upper",
+                "value": "1"
             })
             
         # Métodos / Operaciones
@@ -339,6 +350,79 @@ def generate_xmi(diagram_data: dict, project_name: str) -> str:
             "tagged": "0",
             "package_name": clean_name
         })
+        
+        # Atributos en la extensión nativa de EA (garantiza tipo nativo, collection=false y duplicates=0 para suprimir {bag})
+        data = node.get("data", {})
+        attrs_list = data.get("attributes", [])
+        if attrs_list:
+            attrs_ext = ET.SubElement(c_el, "attributes")
+            for a_idx, attr in enumerate(attrs_list):
+                a_name = attr.get("name", "")
+                if not a_name:
+                    continue
+                a_type_str = str(attr.get("data_type", "String") or "String").strip()
+                a_vis = attr.get("visibility", "-")
+                scope_str = "Public" if a_vis == "+" else "Protected" if a_vis == "#" else "Private"
+                attr_ea_id = f"{ea_id}_ATTR_{hashlib.md5(a_name.encode('utf-8')).hexdigest()[:8]}"
+                
+                a_sub = ET.SubElement(attrs_ext, "attribute", {
+                    "xmi:idref": attr_ea_id,
+                    "name": a_name,
+                    "scope": scope_str
+                })
+                ET.SubElement(a_sub, "initial")
+                ET.SubElement(a_sub, "documentation")
+                ET.SubElement(a_sub, "model", {
+                    "ea_localid": str(a_idx + 1),
+                    "type": a_type_str,
+                    "name": a_name
+                })
+                ET.SubElement(a_sub, "properties", {
+                    "type": a_type_str,
+                    "collection": "false",
+                    "duplicates": "0",
+                    "changeability": "changeable"
+                })
+                ET.SubElement(a_sub, "coords", {"ordered": "0"})
+                ET.SubElement(a_sub, "containment", {"containment": "Not Specified", "position": str(a_idx)})
+                ET.SubElement(a_sub, "style")
+                ET.SubElement(a_sub, "styleex", {"value": "volatile=0;"})
+                ET.SubElement(a_sub, "tags")
+                ET.SubElement(a_sub, "xrefs")
+
+        # Operaciones en la extensión nativa de EA
+        meths_list = data.get("methods", [])
+        if meths_list:
+            ops_ext = ET.SubElement(c_el, "operations")
+            for m_idx, meth in enumerate(meths_list):
+                m_name = meth.get("name", "")
+                if not m_name:
+                    continue
+                m_type_str = str(meth.get("return_type", "void") or "void").strip()
+                m_vis = meth.get("visibility", "+")
+                scope_str = "Public" if m_vis == "+" else "Protected" if m_vis == "#" else "Private"
+                op_ea_id = f"{ea_id}_OP_{hashlib.md5(m_name.encode('utf-8')).hexdigest()[:8]}"
+                
+                op_sub = ET.SubElement(ops_ext, "operation", {
+                    "xmi:idref": op_ea_id,
+                    "name": m_name,
+                    "scope": scope_str
+                })
+                ET.SubElement(op_sub, "properties", {
+                    "type": m_type_str,
+                    "ea_type": m_type_str,
+                    "position": str(m_idx)
+                })
+                ET.SubElement(op_sub, "model", {
+                    "ea_localid": str(m_idx + 1),
+                    "type": m_type_str,
+                    "name": m_name
+                })
+                ET.SubElement(op_sub, "type", {
+                    "type": m_type_str,
+                    "returnarray": "0",
+                    "pure": "0"
+                })
         
     # 3b. Connectors en la extensión (Garantiza nombres, tipos y multiplicidades en EA)
     conns_ext = ET.SubElement(ext, "connectors")

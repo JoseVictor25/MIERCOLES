@@ -110,7 +110,7 @@ Debes responder ÃšNICAMENTE con un objeto JSON vÃ¡lido con la siguiente estr
   ]
 }}
 - Si el usuario te pide agregar o eliminar una clase, atributo o relaciÃ³n, incluye la acciÃ³n en 'updates'.
-- Tipos de relaciÃ³n soportados: 'association', 'dependency', 'inheritance', 'aggregation', 'composition'.
+- Tipos de relaciÃ³n soportados: 'association', 'dependency', 'inheritance', 'aggregation', 'composition', 'association_class'.
 - Si el usuario solo hace una pregunta, 'updates' debe ser una lista vacÃ­a [].
 """
 
@@ -268,7 +268,8 @@ Responde ÃšNICAMENTE con un JSON vÃ¡lido con esta estructura exacta (sin mar
       "relation_type": "association",
       "source_multiplicity": "1",
       "target_multiplicity": "*",
-      "label": "nombre de la relacion si aparece"
+      "label": "nombre de la relacion si aparece",
+      "association_class": ""
     }
   ],
   "description": "Breve descripcion de lo que se encontro en la imagen"
@@ -276,15 +277,21 @@ Responde ÃšNICAMENTE con un JSON vÃ¡lido con esta estructura exacta (sin mar
 
 Reglas IMPORTANTES:
 - visibility: "+" para public, "-" para private, "#" para protected
-- relation_type: "association", "inheritance", "composition", "aggregation", "dependency"
+- relation_type: "association", "inheritance", "composition", "aggregation", "dependency", "association_class"
   * Herencia/Generalizacion (flecha triangular hueca) -> "inheritance"
   * Composicion (rombo relleno) -> "composition"
   * Agregacion (rombo hueco) -> "aggregation"
-  * Dependencia (linea punteada) -> "dependency"
-  * Asociacion simple (linea solida) -> "association"
+  * Dependencia (linea punteada con flecha abierta) -> "dependency"
+  * Asociacion simple (linea solida sin punta especial) -> "association"
+  * Clase de Asociacion (relacion muchos-a-muchos con clase intermedia conectada por linea punteada) -> usa "association" para el edge principal entre las dos clases. En el campo "association_class" pon el nombre de la clase intermedia.
+- DETECCION DE CLASE DE ASOCIACION: Cuando veas una clase conectada al CENTRO de una linea de asociacion mediante una linea punteada (sin punta de flecha), eso es una clase de asociacion. La clase intermedia (ej: DetalleCompra, DetalleVenta) es la clase de asociacion.
+  Ejemplo: Si Producto y Compra tienen una asociacion muchos-a-muchos y DetalleCompra esta conectada al centro con linea punteada, crea:
+    {"source": "Producto", "target": "Compra", "relation_type": "association", "source_multiplicity": "0..*", "target_multiplicity": "1..*", "association_class": "DetalleCompra"}
+  NO crees relaciones separadas entre DetalleCompra y Producto/Compra.
 - source_multiplicity y target_multiplicity: extrae los valores EXACTOS que aparecen en la imagen,
   por ejemplo "1", "0..1", "1..*", "*", "0..*", "1..1". Si no hay multiplicidad visible, usa "".
 - label: etiqueta de la relacion si aparece (ej: "tiene", "realiza", "pertenece"). Si no hay, usa "".
+- association_class: nombre de la clase de asociacion si existe, si no hay usa "".
 - Si no hay clases detectables, retorna {"classes": [], "relations": [], "description": "No se encontraron clases UML"}
 - Los nombres de clases deben estar en PascalCase sin espacios
 - Responde en espaÃ±ol en el campo description
@@ -342,6 +349,22 @@ def _build_reactflow_data(parsed: dict):
         src_id = class_id_map.get(src_name)
         tgt_id = class_id_map.get(tgt_name)
         if src_id and tgt_id:
+            assoc_class_name = rel.get("association_class", "") or ""
+            assoc_class_id = class_id_map.get(assoc_class_name) if assoc_class_name else None
+            # Forzar relation_type a 'association' cuando hay una clase de asociacion
+            rel_type = rel.get("relation_type", "association")
+            if assoc_class_id:
+                rel_type = "association"
+            edge_data = {
+                "relation_type": rel_type,
+                "sourceMultiplicity": rel.get("source_multiplicity", ""),
+                "targetMultiplicity": rel.get("target_multiplicity", ""),
+                "label": rel.get("label", ""),
+                "bendX": 0,
+                "bendY": 0,
+            }
+            if assoc_class_id:
+                edge_data["associationClassId"] = assoc_class_id
             edges.append({
                 "id": f"edge-vision-{k}",
                 "type": "umlEdge",
@@ -350,14 +373,7 @@ def _build_reactflow_data(parsed: dict):
                 "target": tgt_id,
                 "sourceHandle": "bottom-source",
                 "targetHandle": "top-target",
-                "data": {
-                    "relation_type": rel.get("relation_type", "association"),
-                    "sourceMultiplicity": rel.get("source_multiplicity", ""),
-                    "targetMultiplicity": rel.get("target_multiplicity", ""),
-                    "label": rel.get("label", ""),
-                    "bendX": 0,
-                    "bendY": 0,
-                },
+                "data": edge_data,
             })
 
     return nodes, edges

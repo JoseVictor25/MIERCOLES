@@ -222,15 +222,15 @@ def generate_spring_boot(request, pk):
     
     diagram_data = project.datos_diagrama or {}
     
-    from .generators.spring_boot_generator import generate_spring_boot_zip
+    from apps.generator.engine import SpringGenerator
     
-    zip_bytes = generate_spring_boot_zip(
-        diagram_data=diagram_data,
+    zip_bytes = SpringGenerator(
+        datos_diagrama=diagram_data,
         group_id=group_id,
         artifact_id=artifact_id,
         project_name=project.name,
-        include_ai_docs=include_ai_docs
-    )
+        include_ai_docs=include_ai_docs,
+    ).generate_zip_bytes()
     
     response = HttpResponse(zip_bytes, content_type='application/zip')
     response['Content-Disposition'] = f'attachment; filename="{artifact_id}-backend.zip"'

@@ -24,9 +24,9 @@ Cada cliente conectado a `/ws/diagram/<id>/` se une al grupo `diagram_<id>`. El 
 
 ## Generación de código
 
-`POST /api/projects/<id>/generate/spring-boot/` usa `apps.projects.generators.spring_boot_generator` y descarga un ZIP con un proyecto Java/Spring Boot. Por cada clase genera entidad, DTO, mapper, repositorio, servicio y controlador, además de `pom.xml` y `application.properties`. La opción `include_ai_docs` intenta añadir JavaDoc y anotaciones Swagger mediante Gemini. No genera proyectos Python, TypeScript ni SQL DDL independiente.
+`POST /api/projects/<id>/generate/spring-boot/` usa `apps.generator.engine.SpringGenerator` y descarga un ZIP con un proyecto Java/Spring Boot. Por cada clase genera entidad, DTOs de entrada y salida, mapper, repositorio, servicio y controlador, además de `pom.xml`, `application.properties` y un README. La opción `include_ai_docs` intenta añadir JavaDoc y anotaciones Swagger mediante Gemini. No genera proyectos Python, TypeScript ni SQL DDL independiente.
 
-La prueba con herencia, 1..N y N..M confirmó una limitación: el ZIP contiene las capas, pero la implementación activa representa esas relaciones como `@ManyToOne` y no genera herencia Java. `apps.generator.engine` y sus plantillas Jinja2 permanecen en el repositorio como implementación alternativa sin ruta pública; no forman parte del resultado descargado por la interfaz.
+El generador interpreta herencia con `extends` y `@Inheritance(JOINED)`; en 1..N coloca la clave foránea en el lado muchos. En N..M sin clase de asociación usa `@ManyToMany`. Si la arista apunta a una clase de asociación mediante `associationClassId`, genera esa clase como entidad con referencias a los dos extremos y sus atributos propios, sin crear una segunda tabla de unión. Las autorrelaciones con `sourceRole` y `targetRole` explícitos reciben nombres de campo únicos; las ambiguas se omiten con un aviso en el log y en el README del ZIP.
 
 ## Estructura principal
 
@@ -35,11 +35,11 @@ backend/
   config/                 settings, URLs, ASGI y WSGI activos
   apps/
     accounts/             usuarios y autenticación
-    projects/             proyectos, snapshots, permisos, XMI y generador activo
-      generators/          Spring Boot, JavaDoc IA, XMI
+    projects/             proyectos, snapshots, permisos, XMI y JavaDoc IA
+      generators/          JavaDoc IA y XMI
     realtime/             consumidor y rutas WebSocket
     ai_core/              endpoints Gemini
-    generator/            motor alternativo y plantillas, sin ruta pública
+    generator/            motor Spring Boot, plantillas Jinja2 y pruebas
     diagrams/             legado no instalado; conservado por sus datos históricos
   manage.py
   requirements.txt
@@ -63,4 +63,4 @@ RESUMEN_GENERAL_SOFTWARE.md
 - El guardado HTTP no valida la estructura interna de `nodes` y `edges` antes de almacenarla.
 - Los endpoints de IA admiten contenido del cliente sin asociarlo a un proyecto; el endpoint de imagen lee el archivo completo en memoria.
 - La aplicación guarda JWT en `localStorage` y envía el token de acceso en la URL del WebSocket. Cookies de sesión con validación de origen o tickets de corta duración son alternativas propuestas, no implementadas.
-- La capa en memoria, el límite desigual de snapshots y las relaciones incompletas del generador requieren trabajo adicional antes de afirmar escalabilidad o generación fiel de todos los diagramas.
+- La capa en memoria y el límite desigual de snapshots requieren trabajo adicional antes de afirmar escalabilidad. La generación de relaciones con semántica UML ambigua necesita roles explícitos y debe revisarse antes de usar el ZIP en producción.

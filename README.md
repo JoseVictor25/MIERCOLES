@@ -50,4 +50,6 @@ Abre la URL que muestre Vite, habitualmente `http://localhost:5173`. Para verifi
 npm run build
 ```
 
-El generador activo produce las capas Java, pero todavía no transforma fielmente herencia ni cardinalidades 1..N y N..M. La colaboración usa una capa de canales en memoria y requiere un solo proceso. Lee `RESUMEN_GENERAL_SOFTWARE.md` para los permisos, funciones y límites actuales.
+El generador Spring Boot usa `backend/apps/generator/engine.py` con plantillas Jinja2. Genera herencia JOINED, relaciones 1..N con clave foránea en el lado muchos y N..M con entidad de asociación cuando el diagrama enlaza `associationClassId`. Conserva los atributos de esa clase. Las autorrelaciones ambiguas se omiten con avisos en el log y en el README del ZIP; para generarlas se requieren `sourceRole` y `targetRole`. El editor avisa si se intenta conectar una clase consigo misma. La opción JavaDoc asistida por IA requiere `GEMINI_API_KEY`.
+
+Antes de generar desde el modal, el editor guarda el estado visible. Si ese guardado falla, no solicita el ZIP. La colaboración usa una capa de canales en memoria y requiere un solo proceso. Lee `RESUMEN_GENERAL_SOFTWARE.md` para los demás permisos y límites actuales.

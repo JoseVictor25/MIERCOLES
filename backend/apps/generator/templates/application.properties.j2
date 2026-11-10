@@ -6,7 +6,7 @@ server.port=8080
 spring.application.name={{ artifact_id | default('hospital') }}
 
 # Configuración del DataSource para PostgreSQL
-spring.datasource.url=jdbc:postgresql://localhost:5432/
+spring.datasource.url=jdbc:postgresql://localhost:5432/{{ database_name }}
 spring.datasource.username=
 spring.datasource.password=
 spring.datasource.driver-class-name=org.postgresql.Driver

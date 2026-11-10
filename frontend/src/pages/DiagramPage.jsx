@@ -648,6 +648,10 @@ function DiagramPageInner() {
 
   // ── Conectar nodos (crear relación UML al jalar desde el centro o bordes) ──
   const onConnect = useCallback((params) => {
+    if (params.source === params.target) {
+      toast.error('No puedes conectar una clase consigo misma desde el editor.');
+      return;
+    }
     takeSnapshot();
     let relType = selectedRelTypeRef.current;
     if (!relType || relType === 'select') relType = 'association';
@@ -737,6 +741,10 @@ function DiagramPageInner() {
 
   // ── Reconectar relación UML a otra clase o handle arrastrando sus extremos ──
   const onReconnect = useCallback((oldEdge, newConnection) => {
+    if (newConnection.source === newConnection.target) {
+      toast.error('No puedes reconectar una relación a la misma clase.');
+      return;
+    }
     takeSnapshot();
     setEdges((eds) => {
       const nextEdges = reconnectEdge(oldEdge, newConnection, eds, { shouldReplaceId: false });

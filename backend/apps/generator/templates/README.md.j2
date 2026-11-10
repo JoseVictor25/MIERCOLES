@@ -1,8 +1,8 @@
-# {{ project_name }} — Backend Spring Boot (5 Capas)
+# {{ project_name }} — Backend Spring Boot
 
 Proyecto backend generado automáticamente a partir del diagrama de clases UML mediante **UML Tool**.
 
-## 🏗️ Arquitectura de 5 Capas
+## Arquitectura en capas
 El código sigue las mejores prácticas de la arquitectura en capas con Spring Boot:
 1. **`entity/`**: Entidades persistentes con anotaciones Jakarta Persistence (JPA).
 2. **`dto/`**: Objetos de transferencia de datos (`RequestDTO` y `ResponseDTO`) para no exponer las entidades JPA directamente.
@@ -37,14 +37,19 @@ La aplicación arrancará por defecto en:
 
 ---
 
-## 💾 Base de Datos H2 (En memoria)
-Para facilitar pruebas inmediatas sin configurar PostgreSQL o MySQL, el proyecto incluye **H2 Database en memoria**.
-- **Consola H2 Web:** `http://localhost:8080/h2-console`
-- **JDBC URL:** `jdbc:h2:mem:{{ database_name }}`
-- **Usuario:** `sa`
-- **Contraseña:** *(vacío)*
+## Base de datos
 
-*(Para cambiar a PostgreSQL o MySQL, edita el archivo `src/main/resources/application.properties`)*
+El proyecto está configurado para PostgreSQL. Crea la base `{{ database_name }}` y
+completa usuario y contraseña en `src/main/resources/application.properties`.
+
+{% if warnings %}
+## Avisos de generación
+
+{% for warning in warnings %}
+- {{ warning }}
+{% endfor %}
+
+{% endif %}
 
 ---
 

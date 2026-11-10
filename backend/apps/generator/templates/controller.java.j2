@@ -8,12 +8,18 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import java.util.List;
+{% if include_ai_docs %}
+import io.swagger.v3.oas.annotations.tags.Tag;
+{% endif %}
 
 /**
  * Controlador REST para gestionar operaciones CRUD sobre {{ entity.name }}.
  * Expone exclusivamente DTOs al exterior.
  */
 @RestController
+{% if include_ai_docs %}
+{{ entity.ai_docs.get('class_swagger', '@Tag(name = "' ~ entity.name ~ '")') }}
+{% endif %}
 @RequestMapping("/api/{{ entity.url_path }}")
 @CrossOrigin(origins = "*")
 public class {{ entity.name }}Controller {

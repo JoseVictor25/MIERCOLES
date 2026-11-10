@@ -27,20 +27,20 @@ public class {{ entity.name }}ServiceImpl implements {{ entity.name }}Service {
     private final {{ entity.name }}Mapper mapper;
 {% for rel in entity.relationships %}
     {% if not rel.is_collection %}
-    private final {{ rel.target_class }}Repository {{ rel.target_class|lower }}Repository;
+    private final {{ rel.target_class }}Repository {{ rel.repo_field }};
     {% endif %}
 {% endfor %}
 
     public {{ entity.name }}ServiceImpl(
         {{ entity.name }}Repository repository,
         {{ entity.name }}Mapper mapper{% for rel in entity.relationships %}{% if not rel.is_collection %},
-        {{ rel.target_class }}Repository {{ rel.target_class|lower }}Repository{% endif %}{% endfor %}
+        {{ rel.target_class }}Repository {{ rel.repo_field }}{% endif %}{% endfor %}
     ) {
         this.repository = repository;
         this.mapper = mapper;
 {% for rel in entity.relationships %}
     {% if not rel.is_collection %}
-        this.{{ rel.target_class|lower }}Repository = {{ rel.target_class|lower }}Repository;
+        this.{{ rel.repo_field }} = {{ rel.repo_field }};
     {% endif %}
 {% endfor %}
     }
@@ -68,7 +68,7 @@ public class {{ entity.name }}ServiceImpl implements {{ entity.name }}Service {
 {% for rel in entity.relationships %}
     {% if not rel.is_collection %}
         if (requestDTO.{{ rel.fk_getter_name }}() != null) {
-            {{ rel.target_class|lower }}Repository.findById(requestDTO.{{ rel.fk_getter_name }}())
+            {{ rel.repo_field }}.findById(requestDTO.{{ rel.fk_getter_name }}())
                 .ifPresent(entity::{{ rel.setter_name }});
         }
     {% endif %}
@@ -88,7 +88,7 @@ public class {{ entity.name }}ServiceImpl implements {{ entity.name }}Service {
 {% for rel in entity.relationships %}
     {% if not rel.is_collection %}
         if (requestDTO.{{ rel.fk_getter_name }}() != null) {
-            {{ rel.target_class|lower }}Repository.findById(requestDTO.{{ rel.fk_getter_name }}())
+            {{ rel.repo_field }}.findById(requestDTO.{{ rel.fk_getter_name }}())
                 .ifPresent(existing::{{ rel.setter_name }});
         } else {
             existing.{{ rel.setter_name }}(null);

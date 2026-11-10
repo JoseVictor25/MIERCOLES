@@ -4,6 +4,7 @@ Traduce el modelo conceptual del diagrama UML a código Java/Spring Boot empaque
 """
 
 import io
+import logging
 import os
 import re
 import zipfile
@@ -12,6 +13,7 @@ from typing import Dict, Any, List
 import jinja2
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+logger = logging.getLogger(__name__)
 
 
 def to_pascal_case(text: str) -> str:
@@ -19,7 +21,7 @@ def to_pascal_case(text: str) -> str:
     if not text:
         return "ClaseSinNombre"
     # Reemplazar caracteres no alfanuméricos
-    cleaned = re.sub(r"[^a-zA-Z0-9_]", " ", str(text).strip())
+    cleaned = re.sub(r"[^a-zA-Z0-9_]", " ", str(text).strip()).replace("_", " ")
     words = cleaned.split()
     if not words:
         return "ClaseGenerada"
@@ -48,10 +50,10 @@ def to_snake_case(text: str) -> str:
 
 def to_plural_slug(text: str) -> str:
     """Genera la ruta plural para el endpoint REST (ej. Cliente -> clientes)."""
-    snake = to_snake_case(text)
-    if snake.endswith("s") or snake.endswith("x") or snake.endswith("z"):
-        return snake + "es"
-    return snake + "s"
+    parts = to_snake_case(text).split("_")
+    last = parts[-1]
+    parts[-1] = last + ("es" if last.endswith(("s", "x", "z")) else "s")
+    return "-".join(parts)
 
 
 def map_java_type(uml_type: str) -> str:
@@ -89,7 +91,8 @@ class SpringGenerator:
     """
 
     def __init__(self, datos_diagrama: Dict[str, Any], project_name: str,
-                 group_id: str = "com.example", artifact_id: str = "backend"):
+                 group_id: str = "com.example", artifact_id: str = "backend",
+                 include_ai_docs: bool = False):
         self.raw_nodes = datos_diagrama.get("nodes", []) if datos_diagrama else []
         self.raw_edges = datos_diagrama.get("edges", []) if datos_diagrama else []
         self.project_name = project_name or "ProyectoUML"
@@ -97,6 +100,8 @@ class SpringGenerator:
         self.artifact_id = to_snake_case(artifact_id) or "backend"
         self.base_package = f"{self.group_id}.{self.artifact_id.replace('-', '_')}"
         self.database_name = f"{self.artifact_id}_db"
+        self.include_ai_docs = include_ai_docs
+        self.warnings = []
 
         # Inicializar Jinja2
         self.jinja_env = jinja2.Environment(
@@ -129,6 +134,7 @@ class SpringGenerator:
 
             raw_attributes = data.get("attributes", [])
             attributes = []
+            used_fields = {"id"}
             has_custom_id = False
             has_dates = False
             has_datetimes = False
@@ -154,6 +160,13 @@ class SpringGenerator:
                     # Incluirlo aquí causaría un campo duplicado en la entidad generada.
                     has_custom_id = True
                     continue
+
+                base_field = attr_field
+                suffix = 2
+                while attr_field in used_fields:
+                    attr_field = f"{base_field}{suffix}"
+                    suffix += 1
+                used_fields.add(attr_field)
 
                 is_bool = java_type == "Boolean"
                 getter_prefix = "is" if is_bool and not attr_field.startswith("is") else "get"
@@ -184,138 +197,99 @@ class SpringGenerator:
                 "has_datetimes": has_datetimes,
                 "has_bigdecimals": has_bigdecimals,
                 "has_collections": False,
+                "used_fields": used_fields,
             }
 
             entities_by_id[node_id] = entity
             entities_by_name[class_name] = entity
 
-        # 2. Procesar relaciones (aristas)
-        for edge in self.raw_edges:
-            source_id = str(edge.get("source"))
-            target_id = str(edge.get("target"))
+        def unique_field(entity, base, reserve_fk=False):
+            base = to_camel_case(base)
+            name, number = base, 2
+            while name in entity["used_fields"] or (reserve_fk and (
+                f"{name}Id" in entity["used_fields"] or f"{name}Nombre" in entity["used_fields"]
+            )):
+                name, number = f"{base}{number}", number + 1
+            entity["used_fields"].add(name)
+            if reserve_fk:
+                entity["used_fields"].update((f"{name}Id", f"{name}Nombre"))
+            return name
 
+        def plural_field(name):
+            base = to_camel_case(name)
+            return base + ("es" if base.endswith(("s", "x", "z")) else "s")
+
+        def add_to_one(owner, target, base=None):
+            field = unique_field(owner, base or target["name"], reserve_fk=True)
+            cap = field[:1].upper() + field[1:]
+            owner["relationships"].append({
+                "type": "ManyToOne", "target_class": target["name"],
+                "field_name": field, "repo_field": f"{field}Repository",
+                "join_column": f"{to_snake_case(field)}_id",
+                "fk_id_field": f"{field}Id", "fk_label_field": f"{field}Nombre",
+                "fk_getter_name": f"get{cap}Id", "fk_setter_name": f"set{cap}Id",
+                "is_collection": False, "getter_name": f"get{cap}", "setter_name": f"set{cap}",
+            })
+            return field
+
+        def add_to_many(owner, target, mapped_by, base=None):
+            field = unique_field(owner, base or plural_field(target["name"]))
+            cap = field[:1].upper() + field[1:]
+            owner["relationships"].append({
+                "type": "OneToMany", "target_class": target["name"],
+                "field_name": field, "mapped_by": mapped_by, "is_collection": True,
+                "getter_name": f"get{cap}", "setter_name": f"set{cap}",
+            })
+            owner["has_collections"] = True
+
+        self.warnings = []
+        for edge in self.raw_edges:
+            source_id, target_id = str(edge.get("source")), str(edge.get("target"))
             if source_id not in entities_by_id or target_id not in entities_by_id:
                 continue
-
-            source_entity = entities_by_id[source_id]
-            target_entity = entities_by_id[target_id]
-
-            # Evitar autorrelaciones en herencia
-            edge_data = edge.get("data", {})
-            rel_type = (edge_data.get("relation_type") or "association").lower()
-            src_mult = str(edge_data.get("sourceMultiplicity") or "").strip()
-            tgt_mult = str(edge_data.get("targetMultiplicity") or "").strip()
+            source, target = entities_by_id[source_id], entities_by_id[target_id]
+            data = edge.get("data") or {}
+            rel_type = (data.get("relation_type") or "association").lower()
+            source_role, target_role = data.get("sourceRole"), data.get("targetRole")
+            if source_id == target_id and (rel_type == "inheritance" or not (source_role and target_role)):
+                warning = f"Arista {edge.get('id', '?')}: autorrelacion de {source['name']} omitida; indique sourceRole y targetRole."
+                self.warnings.append(warning)
+                logger.warning(warning)
+                continue
 
             if rel_type == "inheritance":
-                # En UML: flecha va del hijo (source) al padre (target)
-                if source_entity != target_entity:
-                    source_entity["parent_class"] = target_entity["name"]
-                    target_entity["is_parent_in_inheritance"] = True
+                source["parent_class"] = target["name"]
+                target["is_parent_in_inheritance"] = True
+                continue
 
-            elif rel_type in ("composition", "aggregation"):
-                # Composición / Agregación:
-                # El contenedor (source) tiene colección de items (target)
-                target_class = target_entity["name"]
-                field_name = to_camel_case(target_class) + "s"
-                cap_field = field_name[:1].upper() + field_name[1:]
-                mapped_by = to_camel_case(source_entity["name"])
+            assoc_id = str(data.get("associationClassId") or "")
+            assoc = entities_by_id.get(assoc_id)
+            if assoc and assoc_id not in (source_id, target_id):
+                add_to_one(assoc, source, source_role)
+                add_to_one(assoc, target, target_role)
+                continue
 
-                # En source: @OneToMany
-                source_entity["relationships"].append({
-                    "type": "OneToMany",
-                    "target_class": target_class,
-                    "field_name": field_name,
-                    "mapped_by": mapped_by,
-                    "is_collection": True,
-                    "getter_name": f"get{cap_field}",
-                    "setter_name": f"set{cap_field}",
+            source_many = "*" in str(data.get("sourceMultiplicity") or "")
+            target_many = "*" in str(data.get("targetMultiplicity") or "")
+            if source_many and target_many:
+                field = unique_field(source, target_role or plural_field(target["name"]))
+                cap = field[:1].upper() + field[1:]
+                source["relationships"].append({
+                    "type": "ManyToMany", "target_class": target["name"],
+                    "field_name": field, "join_table": f"{source['table_name']}_{target['table_name']}",
+                    "join_column": f"{source['table_name']}_id",
+                    "inverse_join_column": f"{target['table_name']}_id",
+                    "is_collection": True, "getter_name": f"get{cap}", "setter_name": f"set{cap}",
                 })
-                source_entity["has_collections"] = True
-
-                # En target: @ManyToOne
-                tgt_field = mapped_by
-                tgt_cap = tgt_field[:1].upper() + tgt_field[1:]
-                target_entity["relationships"].append({
-                    "type": "ManyToOne",
-                    "target_class": source_entity["name"],
-                    "field_name": tgt_field,
-                    "join_column": f"{to_snake_case(source_entity['name'])}_id",
-                    "fk_id_field": f"{tgt_field}Id",
-                    "fk_label_field": f"{tgt_field}Nombre",
-                    "fk_getter_name": f"get{tgt_cap}Id",
-                    "fk_setter_name": f"set{tgt_cap}Id",
-                    "is_collection": False,
-                    "getter_name": f"get{tgt_cap}",
-                    "setter_name": f"set{tgt_cap}",
-                })
-
+                source["has_collections"] = True
+            elif target_many or rel_type in ("composition", "aggregation"):
+                many_field = add_to_one(target, source, source_role)
+                add_to_many(source, target, many_field, target_role)
+            elif source_many:
+                many_field = add_to_one(source, target, target_role)
+                add_to_many(target, source, many_field, source_role)
             else:
-                # Asociación estándar
-                # Analizar multiplicidades
-                is_src_many = "*" in src_mult or "0..*" in src_mult or "1..*" in src_mult
-                is_tgt_many = "*" in tgt_mult or "0..*" in tgt_mult or "1..*" in tgt_mult
-
-                if is_src_many and is_tgt_many:
-                    # ManyToMany
-                    source_entity["relationships"].append({
-                        "type": "ManyToMany",
-                        "target_class": target_entity["name"],
-                        "field_name": to_camel_case(target_entity["name"]) + "s",
-                        "join_table": f"{source_entity['table_name']}_{target_entity['table_name']}",
-                        "join_column": f"{source_entity['table_name']}_id",
-                        "inverse_join_column": f"{target_entity['table_name']}_id",
-                        "is_collection": True,
-                        "getter_name": f"get{target_entity['name']}s",
-                        "setter_name": f"set{target_entity['name']}s",
-                    })
-                    source_entity["has_collections"] = True
-                elif is_tgt_many:
-                    # OneToMany en source, ManyToOne en target
-                    source_field = to_camel_case(target_entity["name"]) + "s"
-                    cap_s = source_field[:1].upper() + source_field[1:]
-                    source_entity["relationships"].append({
-                        "type": "OneToMany",
-                        "target_class": target_entity["name"],
-                        "field_name": source_field,
-                        "mapped_by": to_camel_case(source_entity["name"]),
-                        "is_collection": True,
-                        "getter_name": f"get{cap_s}",
-                        "setter_name": f"set{cap_s}",
-                    })
-                    source_entity["has_collections"] = True
-
-                    tgt_field = to_camel_case(source_entity["name"])
-                    tgt_cap = tgt_field[:1].upper() + tgt_field[1:]
-                    target_entity["relationships"].append({
-                        "type": "ManyToOne",
-                        "target_class": source_entity["name"],
-                        "field_name": tgt_field,
-                        "join_column": f"{to_snake_case(source_entity['name'])}_id",
-                        "fk_id_field": f"{tgt_field}Id",
-                        "fk_label_field": f"{tgt_field}Nombre",
-                        "fk_getter_name": f"get{tgt_cap}Id",
-                        "fk_setter_name": f"set{tgt_cap}Id",
-                        "is_collection": False,
-                        "getter_name": f"get{tgt_cap}",
-                        "setter_name": f"set{tgt_cap}",
-                    })
-                else:
-                    # ManyToOne (predeterminado para asociaciones simples)
-                    field_name = to_camel_case(target_entity["name"])
-                    cap_field = field_name[:1].upper() + field_name[1:]
-                    source_entity["relationships"].append({
-                        "type": "ManyToOne",
-                        "target_class": target_entity["name"],
-                        "field_name": field_name,
-                        "join_column": f"{to_snake_case(target_entity['name'])}_id",
-                        "fk_id_field": f"{field_name}Id",
-                        "fk_label_field": f"{field_name}Nombre",
-                        "fk_getter_name": f"get{cap_field}Id",
-                        "fk_setter_name": f"set{cap_field}Id",
-                        "is_collection": False,
-                        "getter_name": f"get{cap_field}",
-                        "setter_name": f"set{cap_field}",
-                    })
+                add_to_one(source, target, target_role)
 
         return list(entities_by_id.values())
 
@@ -324,6 +298,15 @@ class SpringGenerator:
         Ejecuta la generación de plantillas y retorna los bytes del archivo .zip.
         """
         entities = self.parse_model()
+
+        if self.include_ai_docs:
+            from apps.projects.generators.ai_docs import generate_ai_docs_for_class
+            raw_by_id = {str(node.get("id")): node.get("data") or {} for node in self.raw_nodes}
+            for entity in entities:
+                raw = raw_by_id.get(entity["id"], {})
+                attrs = [{"name": a.get("name"), "type": a.get("data_type")} for a in raw.get("attributes", [])]
+                methods = [{"name": m.get("name"), "return_type": m.get("return_type")} for m in raw.get("methods", [])]
+                entity["ai_docs"] = generate_ai_docs_for_class(entity["name"], attrs, methods, self.project_name)
 
         # Si el modelo no tiene clases, crear una clase de ejemplo
         if not entities:
@@ -352,6 +335,7 @@ class SpringGenerator:
                 "has_datetimes": False,
                 "has_bigdecimals": False,
                 "has_collections": False,
+                "ai_docs": {},
             }]
 
         package_path = self.base_package.replace(".", "/")
@@ -367,6 +351,8 @@ class SpringGenerator:
                 "base_package": self.base_package,
                 "database_name": self.database_name,
                 "entities": entities,
+                "warnings": self.warnings,
+                "include_ai_docs": self.include_ai_docs,
             }
 
             # 1. pom.xml

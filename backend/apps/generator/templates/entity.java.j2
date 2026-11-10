@@ -1,7 +1,11 @@
 package {{ base_package }}.entity;
+{% set docs = entity.ai_docs|default({}) %}
 
 import jakarta.persistence.*;
 import java.io.Serializable;
+{% if include_ai_docs %}
+import io.swagger.v3.oas.annotations.media.Schema;
+{% endif %}
 {% if entity.has_dates %}
 import java.time.LocalDate;
 {% endif %}
@@ -17,10 +21,12 @@ import java.util.ArrayList;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 {% endif %}
 
-/**
+{% if docs.get('class_javadoc') %}{{ docs.get('class_javadoc') }}
+{% else %}/**
  * Entidad JPA para {{ entity.name }}.
  * Tabla en BD: {{ entity.table_name }}
  */
+{% endif %}
 @Entity
 @Table(name = "{{ entity.table_name }}")
 {% if entity.is_parent_in_inheritance %}
@@ -38,6 +44,8 @@ public class {{ entity.name }}{% if entity.parent_class %} extends {{ entity.par
 
     // Atributos
 {% for attr in entity.attributes %}
+    {% if docs.get('attributes_docs', {}).get(attr.name) %}{{ docs.get('attributes_docs', {}).get(attr.name) }}
+    {% endif %}
     {% if attr.is_id and not entity.parent_class %}
     @Id
     {% if attr.is_generated %}
@@ -82,7 +90,7 @@ public class {{ entity.name }}{% if entity.parent_class %} extends {{ entity.par
     }
 
     // Getters y Setters
-{% if not entity.parent_class and not entity.has_custom_id %}
+{% if not entity.parent_class %}
     public Long getId() {
         return id;
     }

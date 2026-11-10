@@ -20,7 +20,13 @@ El código sigue las mejores prácticas de la arquitectura en capas con Spring B
 ---
 
 ## ▶️ Ejecución Rápida
-En la raíz del proyecto desempaquetado ejecuta:
+Antes de arrancar, crea en PostgreSQL la base configurada en `src/main/resources/application.properties`:
+
+```sql
+CREATE DATABASE {{ database_name }};
+```
+
+Completa el usuario y la contraseña en ese archivo. Después, en la raíz del proyecto desempaquetado, ejecuta:
 
 ```bash
 mvn spring-boot:run
@@ -35,12 +41,13 @@ java -jar target/{{ artifact_id }}-1.0.0.jar
 La aplicación arrancará por defecto en:
 👉 `http://localhost:8080`
 
+La interfaz Swagger UI está disponible en `http://localhost:8080/swagger-ui/index.html`.
+
 ---
 
 ## Base de datos
 
-El proyecto está configurado para PostgreSQL. Crea la base `{{ database_name }}` y
-completa usuario y contraseña en `src/main/resources/application.properties`.
+El proyecto está configurado para PostgreSQL mediante `src/main/resources/application.properties`.
 
 {% if warnings %}
 ## Avisos de generación

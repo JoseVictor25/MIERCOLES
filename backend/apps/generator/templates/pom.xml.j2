@@ -22,13 +22,12 @@
     </properties>
 
     <dependencies>
-        {% if include_ai_docs %}
+        <!-- Documentación OpenAPI y Swagger UI -->
         <dependency>
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
-            <version>2.3.0</version>
+            <version>2.5.0</version>
         </dependency>
-        {% endif %}
         <!-- Spring Boot Web -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

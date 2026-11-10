@@ -2,6 +2,7 @@ import io
 import re
 import zipfile
 from unittest.mock import patch
+from xml.etree import ElementTree
 
 from django.test import SimpleTestCase
 
@@ -43,6 +44,40 @@ def generated_files(diagram, **options):
 
 
 class SpringGeneratorRegressionTests(SimpleTestCase):
+    def test_pom_swagger_and_database_setup_match_generated_properties(self):
+        for options in ({}, {"include_ai_docs": True}):
+            with self.subTest(options=options):
+                if options:
+                    with patch("apps.projects.generators.ai_docs.generate_ai_docs_for_class",
+                               return_value={}):
+                        files = generated_files(sample_diagram(), **options)
+                else:
+                    files = generated_files(sample_diagram(), **options)
+
+                pom = ElementTree.fromstring(files["ejemplo/pom.xml"])
+                ns = {"m": "http://maven.apache.org/POM/4.0.0"}
+                dependencies = pom.findall("m:dependencies/m:dependency", ns)
+                for dependency in dependencies:
+                    names = [child.tag for child in dependency]
+                    self.assertEqual(len(names), len(set(names)))
+                    self.assertEqual(len(dependency.findall("m:groupId", ns)), 1)
+                    self.assertEqual(len(dependency.findall("m:artifactId", ns)), 1)
+                springdoc = [dependency for dependency in dependencies if
+                             dependency.findtext("m:artifactId", namespaces=ns)
+                             == "springdoc-openapi-starter-webmvc-ui"]
+                self.assertEqual(len(springdoc), 1)
+                self.assertEqual(springdoc[0].findtext("m:groupId", namespaces=ns),
+                                 "org.springdoc")
+                self.assertEqual(springdoc[0].findtext("m:version", namespaces=ns), "2.5.0")
+
+                readme = files["ejemplo/README.md"]
+                properties = files["ejemplo/src/main/resources/application.properties"]
+                database = re.search(r"jdbc:postgresql://[^/]+/([\w]+)", properties).group(1)
+                self.assertIn(f"CREATE DATABASE {database};", readme)
+                self.assertLess(readme.index(f"CREATE DATABASE {database};"),
+                                readme.index("mvn spring-boot:run"))
+                self.assertIn("http://localhost:8080/swagger-ui/index.html", readme)
+
     def test_inherited_dtos_mapper_and_relation_label(self):
         diagram = sample_diagram()
         diagram["nodes"][-1]["data"]["attributes"] = []

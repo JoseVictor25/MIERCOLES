@@ -1,4 +1,4 @@
-﻿@startuml Modelo_de_datos_UMLCraft
+@startuml Modelo_de_datos_UMLCraft
 title Modelos persistidos actuales
 
 class User {

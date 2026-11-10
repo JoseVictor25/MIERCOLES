@@ -152,7 +152,7 @@ MEDIA_ROOT = BASE_DIR / "media"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# ─── IA — configuración híbrida (Groq + Ollama fallback) ──────────────────────
+# Configuración de Gemini.
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODELS = [
     "gemini-3.6-flash",

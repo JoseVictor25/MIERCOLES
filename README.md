@@ -1,0 +1,53 @@
+# UMLCraft
+
+Editor colaborativo de diagramas de clases UML con backend Django/Channels y frontend React/Vite. El diagrama se guarda como JSON en cada proyecto. Puede exportarse a XMI o descargarse como un backend Java/Spring Boot en ZIP.
+
+## Requisitos
+
+- Python compatible con Django 6.1 (probado con Python 3.13)
+- Node.js y npm compatibles con Vite 8
+- PostgreSQL es opcional; SQLite funciona sin servidor adicional
+
+## Backend
+
+Desde `backend/`, crea un entorno virtual, instálalo y migra:
+
+```powershell
+python -m venv venv
+.\venv\Scripts\python.exe -m pip install -r requirements.txt
+Copy-Item .env.example .env
+.\venv\Scripts\python.exe manage.py migrate
+.\venv\Scripts\daphne.exe -b 127.0.0.1 -p 8000 config.asgi:application
+```
+
+En Linux o macOS usa `source venv/bin/activate`, `cp .env.example .env`, `python manage.py migrate` y `daphne -b 127.0.0.1 -p 8000 config.asgi:application`.
+
+`backend/.env.example` habilita desarrollo con `DEBUG=True` y una clave de ejemplo: reemplázala. Si `DEBUG=False`, `SECRET_KEY` es obligatoria. El esquema se crea con `manage.py migrate`; no se usa un script SQL manual. `GEMINI_API_KEY` es opcional y solo hace falta para IA. La generación Spring Boot sin JavaDoc asistido funciona sin esa clave.
+
+### PostgreSQL opcional
+
+Define `DB_ENGINE=django.db.backends.postgresql` y `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT` en `backend/.env`. Crea primero la base de datos y ejecuta `python manage.py migrate`. La configuración SQLite usa `backend/db.sqlite3` y es la opción por defecto.
+
+## Frontend
+
+Desde `frontend/`:
+
+```powershell
+npm install
+Copy-Item .env.example .env
+npm run dev
+```
+
+Abre la URL que muestre Vite, habitualmente `http://localhost:5173`. Para verificar la compilación: `npm run build`. `VITE_API_URL` y `VITE_WS_URL` son opcionales; los valores locales por defecto son `http://localhost:8000/api/` y `ws://localhost:8000`. Ajusta `CORS_ALLOWED_ORIGINS` si Vite usa otro origen. En un host remoto, el cliente puede usar `/api/` y el origen WebSocket del navegador si un proxy los encamina.
+
+## Comprobaciones
+
+```powershell
+# backend/
+.\venv\Scripts\python.exe manage.py check
+.\venv\Scripts\python.exe manage.py makemigrations --check --dry-run
+# frontend/
+npm run build
+```
+
+El generador activo produce las capas Java, pero todavía no transforma fielmente herencia ni cardinalidades 1..N y N..M. La colaboración usa una capa de canales en memoria y requiere un solo proceso. Lee `RESUMEN_GENERAL_SOFTWARE.md` para los permisos, funciones y límites actuales.

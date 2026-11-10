@@ -1,4 +1,4 @@
-﻿# Modelo de datos actual
+# Modelo de datos actual
 
 El modelo persistido se define en `backend/apps/accounts/models.py` y
 `backend/apps/projects/models.py`. Django crea y actualiza el esquema mediante

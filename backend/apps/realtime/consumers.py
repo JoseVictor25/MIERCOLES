@@ -41,8 +41,8 @@ class DiagramConsumer(AsyncWebsocketConsumer):
             self.scope["user"] = user
 
         # Verificar que el usuario tiene acceso al proyecto
-        has_access = await self._check_project_access(user, self.diagram_id)
-        if not has_access:
+        self.project_role = await self._get_project_role(user, self.diagram_id)
+        if not self.project_role:
             await self.close(code=4003)
             return
 
@@ -88,6 +88,9 @@ class DiagramConsumer(AsyncWebsocketConsumer):
             return
 
         msg_type = data.get("type")
+
+        if self.project_role == "viewer" and msg_type in ("diagram_update", "cursor_move"):
+            return
 
         if msg_type == "diagram_update":
             # Re-difundir el estado completo del diagrama a todos excepto el remitente
@@ -193,7 +196,7 @@ class DiagramConsumer(AsyncWebsocketConsumer):
             return None
 
     @database_sync_to_async
-    def _check_project_access(self, user, diagram_id):
+    def _get_project_role(self, user, diagram_id):
         """
         Verifica que el usuario es dueño o colaborador del proyecto
         cuyo id coincide con diagram_id.
@@ -202,7 +205,7 @@ class DiagramConsumer(AsyncWebsocketConsumer):
         try:
             project = Project.objects.get(id=diagram_id)
             if project.owner == user:
-                return True
-            return ProjectCollaborator.objects.filter(project=project, user=user).exists()
+                return "owner"
+            return ProjectCollaborator.objects.filter(project=project, user=user).values_list("role", flat=True).first()
         except Project.DoesNotExist:
-            return False
+            return None

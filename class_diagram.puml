@@ -1,38 +1,44 @@
-@startuml Diagrama_Clases_UML
+﻿@startuml Modelo_de_datos_UMLCraft
+title Modelos persistidos actuales
 
-title Diagrama de Clases UML - Herramienta Colaborativa de Modelado
-
-skinparam classAttributeIconSize 0
-skinparam monochrome false
-skinparam shadowing false
-skinparam defaultFontName "Segoe UI", sans-serif
-
-class Usuario {
-  +id: int
-  +nombre: string
-  +email: string
-  +password_hash: string
-  +estado: string
-  +fecha_registro: datetime
+class User {
+  +id: bigint
+  +username: string
+  +email: string (único)
+  +avatar: imagen opcional
+  +created_at: datetime
+  .. otros campos de AbstractUser ..
 }
 
-class Proyecto {
-  +id: int
-  +titulo: string
-  +descripcion: string
-  +fecha_creacion: datetime
-  +fecha_actualizacion: datetime
-  +datos_diagrama: json
+class Project {
+  +id: bigint
+  +name: string
+  +description: text
+  +datos_diagrama: JSON
+  +created_at: datetime
+  +updated_at: datetime
 }
 
-class DetalleProyecto {
-  +id: int
-  +rol: string
-  +fecha_asignacion: datetime
+class ProjectCollaborator {
+  +id: bigint
+  +role: editor | viewer
+  +joined_at: datetime
 }
 
-Usuario "1" -- "0..*" Proyecto : propietario >
-Usuario "1" -- "0..*" DetalleProyecto : usuario >
-Proyecto "1" -- "0..*" DetalleProyecto : proyecto >
+class DiagramSnapshot {
+  +id: bigint
+  +diagram_data: JSON
+  +label: string
+  +created_at: datetime
+}
 
+User "1" -- "0..*" Project : owner
+User "1" -- "0..*" ProjectCollaborator : user
+Project "1" -- "0..*" ProjectCollaborator : project
+User "0..1" -- "0..*" DiagramSnapshot : saved_by
+Project "1" -- "0..*" DiagramSnapshot : project
+
+note right of Project
+  datos_diagrama contiene nodes y edges.
+end note
 @enduml

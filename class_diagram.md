@@ -1,93 +1,19 @@
-# Diagrama de Clases Definitivo del Sistema
+﻿# Modelo de datos actual
 
-Este es el modelo oficial de clases y base de datos definido para el sistema:
+El modelo persistido se define en `backend/apps/accounts/models.py` y
+`backend/apps/projects/models.py`. Django crea y actualiza el esquema mediante
+`python manage.py migrate`; este documento no sustituye las migraciones.
 
----
+| Modelo | Tabla | Campos propios principales |
+| --- | --- | --- |
+| `User` | `usuario` | Campos de `AbstractUser`, `email` único, `avatar`, `created_at` |
+| `Project` | `proyecto` | `name`, `description`, `owner`, `datos_diagrama` (JSON), `created_at`, `updated_at` |
+| `ProjectCollaborator` | `detalle_proyecto` | `project`, `user`, `role` (`editor` o `viewer`), `joined_at` |
+| `DiagramSnapshot` | `diagrama_snapshot` | `project`, `saved_by`, `diagram_data` (JSON), `label`, `created_at` |
 
-## 1. Código PlantUML (`.puml`)
+El dueño está representado por `Project.owner`; no existe un rol de colaborador
+`owner`. Cada pareja proyecto-usuario puede aparecer una sola vez en
+`ProjectCollaborator`. Las clases y relaciones del lienzo se guardan dentro de
+`Project.datos_diagrama` como `nodes` y `edges`.
 
-```plantuml
-@startuml Diagrama_Clases_UML
-
-title Diagrama de Clases UML - Herramienta Colaborativa de Modelado
-
-skinparam classAttributeIconSize 0
-skinparam monochrome false
-skinparam shadowing false
-skinparam defaultFontName "Segoe UI", sans-serif
-
-class Usuario {
-  +id: int
-  +nombre: string
-  +email: string
-  +password_hash: string
-  +estado: string
-  +fecha_registro: datetime
-}
-
-class Proyecto {
-  +id: int
-  +titulo: string
-  +descripcion: string
-  +fecha_creacion: datetime
-  +fecha_actualizacion: datetime
-  +datos_diagrama: json
-}
-
-class DetalleProyecto {
-  +id: int
-  +rol: string
-  +fecha_asignacion: datetime
-}
-
-Usuario "1" -- "0..*" Proyecto : propietario >
-Usuario "1" -- "0..*" DetalleProyecto : usuario >
-Proyecto "1" -- "0..*" DetalleProyecto : proyecto >
-
-@enduml
-```
-
----
-
-## 2. Código Mermaid
-
-```mermaid
-classDiagram
-    direction TB
-
-    class Usuario {
-        +int id
-        +string nombre
-        +string email
-        +string password_hash
-        +string estado
-        +datetime fecha_registro
-    }
-
-    class Proyecto {
-        +int id
-        +string titulo
-        +string descripcion
-        +datetime fecha_creacion
-        +datetime fecha_actualizacion
-        +json datos_diagrama
-    }
-
-    class DetalleProyecto {
-        +int id
-        +string rol
-        +datetime fecha_asignacion
-    }
-
-    Usuario "1" -- "0..*" Proyecto : propietario >
-    Usuario "1" -- "0..*" DetalleProyecto : usuario >
-    Proyecto "1" -- "0..*" DetalleProyecto : proyecto >
-```
-
----
-
-## 3. Justificación del Modelo para el Parcial
-
-1. **`Usuario`**: Gestiona la autenticación, seguridad y datos de los miembros del sistema.
-2. **`Proyecto`**: Contiene la información del proyecto y almacena el estado visual completo del lienzo UML en el campo `datos_diagrama` (formato JSON de clases, atributos, métodos, coordenadas y flechas UML).
-3. **`DetalleProyecto`**: Clase de asociación que resuelve la relación Muchos a Muchos entre `Usuario` y `Proyecto`, guardando el `rol` de cada colaborador (ej. editor, lector) y la fecha en que fue invitado.
+El diagrama PlantUML equivalente está en `class_diagram.puml`.

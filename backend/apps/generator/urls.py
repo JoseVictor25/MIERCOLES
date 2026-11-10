@@ -1,6 +1,3 @@
-from django.urls import path
-from .views import generate_spring_boot
+"""Rutas del motor alternativo, actualmente sin endpoints públicos."""
 
-urlpatterns = [
-    path("projects/<int:pk>/generate/spring-boot/", generate_spring_boot, name="generate-spring-boot"),
-]
+urlpatterns = []

@@ -1,4 +1,3 @@
-import os
 import base64
 import json
 import re
@@ -10,17 +9,10 @@ from rest_framework import status
 from django.conf import settings
 
 
-# â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-def _reload_env():
-    from dotenv import load_dotenv
-    from pathlib import Path
-    load_dotenv(Path(settings.BASE_DIR) / ".env", override=True)
-
+# ─── Helpers ───────────────────────────────────────────────────────────────────
 
 def _get_gemini_key():
-    _reload_env()
-    key = getattr(settings, "GEMINI_API_KEY", "") or os.getenv("GEMINI_API_KEY", "")
+    key = settings.GEMINI_API_KEY
     return key.strip() if key else ""
 
 
@@ -31,7 +23,7 @@ def _gemini_post(model: str, payload: dict, key: str, timeout: int = 15):
 
 
 def _parse_json_safe(text: str):
-    """Extrae el primer objeto JSON vÃ¡lido de un texto."""
+    """Extrae el primer objeto JSON válido de un texto."""
     try:
         return json.loads(text.strip())
     except Exception:
@@ -46,15 +38,10 @@ def _parse_json_safe(text: str):
 
 
 # Modelos de Gemini disponibles (en orden de preferencia para visión)
-GEMINI_MODELS = [
-    "gemini-3.6-flash",
-    "gemini-3-flash-preview",
-    "gemini-flash-latest",
-    "gemini-flash-lite-latest",
-]
+GEMINI_MODELS = settings.GEMINI_MODELS
 
 
-# â”€â”€â”€ CU-09: Chat con IA (Asistente del diagrama) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── CU-09: Chat con IA (Asistente del diagrama) ──────────────────────────────
 
 def _build_chat_prompt(diagram_data: dict, user_message: str) -> str:
     classes = []
@@ -82,10 +69,10 @@ def _build_chat_prompt(diagram_data: dict, user_message: str) -> str:
         tgt = edge.get("target", "?")
         relations.append(f"  {src} --[{rel_type}]--> {tgt}")
 
-    diagram_text = "\n\n".join(classes) if classes else "(Diagrama vacÃ­o)"
+    diagram_text = "\n\n".join(classes) if classes else "(Diagrama vacío)"
     relations_text = "\n".join(relations) if relations else "  (sin relaciones)"
 
-    return f"""Eres un experto en diseÃ±o orientado a objetos y UML 2.5.
+    return f"""Eres un experto en diseño orientado a objetos y UML 2.5.
 El usuario tiene este diagrama de clases UML actual:
 
 === CLASES ===
@@ -97,7 +84,7 @@ El usuario tiene este diagrama de clases UML actual:
 === COMANDO / PREGUNTA DEL USUARIO ===
 {user_message}
 
-Debes responder ÃšNICAMENTE con un objeto JSON vÃ¡lido con la siguiente estructura:
+Debes responder ÚNICAMENTE con un objeto JSON válido con la siguiente estructura:
 {{
   "message": "Respuesta en texto para el usuario, confirmando lo que hiciste o aconsejando.",
   "updates": [
@@ -109,29 +96,29 @@ Debes responder ÃšNICAMENTE con un objeto JSON vÃ¡lido con la siguiente estr
     {{ "action": "delete_relation", "source_class": "ClaseA", "target_class": "ClaseB" }}
   ]
 }}
-- Si el usuario te pide agregar o eliminar una clase, atributo o relaciÃ³n, incluye la acciÃ³n en 'updates'.
-- Tipos de relaciÃ³n soportados: 'association', 'dependency', 'inheritance', 'aggregation', 'composition', 'association_class'.
-- Si el usuario solo hace una pregunta, 'updates' debe ser una lista vacÃ­a [].
+- Si el usuario te pide agregar o eliminar una clase, atributo o relación, incluye la acción en 'updates'.
+- Tipos de relación soportados: 'association', 'dependency', 'inheritance', 'aggregation', 'composition', 'association_class'.
+- Si el usuario solo hace una pregunta, 'updates' debe ser una lista vacía [].
 """
 
 
 @api_view(["POST"])
 @permission_classes([permissions.IsAuthenticated])
 def ai_suggest(request):
-    """POST /api/ai/suggest/ â€” Chat con IA sobre el diagrama (solo Gemini)."""
+    """POST /api/ai/suggest/ — Chat con IA sobre el diagrama (solo Gemini)."""
     message = request.data.get("message", "").strip()
     diagram_data = request.data.get("diagram_data", {})
 
     if not message:
         return Response(
-            {"detail": "El mensaje no puede estar vacÃ­o."},
+            {"detail": "El mensaje no puede estar vacío."},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
     gemini_key = _get_gemini_key()
     if not gemini_key:
         return Response(
-            {"detail": "GEMINI_API_KEY no configurada. AgrÃ©gala al archivo .env del backend."},
+            {"detail": "GEMINI_API_KEY no configurada. Agrégala al archivo .env del backend."},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
@@ -157,7 +144,7 @@ def ai_suggest(request):
                         "model": f"Gemini ({model})",
                     })
                 return Response({
-                    "reply": "Se ejecutÃ³ el comando pero no se pudo leer la respuesta.",
+                    "reply": "Se ejecutó el comando pero no se pudo leer la respuesta.",
                     "updates": [],
                     "model": f"Gemini ({model})",
                 })
@@ -165,21 +152,21 @@ def ai_suggest(request):
                 errors.append(f"{model}: sobrecargado (503)")
                 continue
             elif resp.status_code in (400, 403):
-                errors.append(f"{model}: clave invÃ¡lida (HTTP {resp.status_code})")
+                errors.append(f"{model}: clave inválida (HTTP {resp.status_code})")
                 break
             else:
-                errors.append(f"{model}: HTTP {resp.status_code} â€” {resp.text[:120]}")
+                errors.append(f"{model}: HTTP {resp.status_code} — {resp.text[:120]}")
         except Exception as e:
             errors.append(f"{model}: {str(e)}")
 
-    error_detail = "\n".join(f"â€¢ {e}" for e in errors)
+    error_detail = "\n".join(f"• {e}" for e in errors)
     return Response(
         {"detail": f"Error al conectar con Gemini.\n\n{error_detail}"},
         status=status.HTTP_500_INTERNAL_SERVER_ERROR,
     )
 
 
-# â”€â”€â”€ CU-10: Imagen â†’ Diagrama UML (solo Gemini Vision) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── CU-10: Imagen → Diagrama UML (solo Gemini Vision) ────────────────────────
 
 
 
@@ -247,7 +234,7 @@ def ai_help_chat(request):
 
 VISION_PROMPT = """Analiza esta imagen y extrae TODAS las clases UML que puedas ver, junto con sus relaciones, multiplicidades y etiquetas.
 
-Responde ÃšNICAMENTE con un JSON vÃ¡lido con esta estructura exacta (sin markdown, sin texto extra):
+Responde ÚNICAMENTE con un JSON válido con esta estructura exacta (sin markdown, sin texto extra):
 {
   "classes": [
     {
@@ -294,7 +281,7 @@ Reglas IMPORTANTES:
 - association_class: nombre de la clase de asociacion si existe, si no hay usa "".
 - Si no hay clases detectables, retorna {"classes": [], "relations": [], "description": "No se encontraron clases UML"}
 - Los nombres de clases deben estar en PascalCase sin espacios
-- Responde en espaÃ±ol en el campo description
+- Responde en español en el campo description
 - Es FUNDAMENTAL que detectes TODAS las relaciones entre clases del diagrama"""
 
 
@@ -439,7 +426,7 @@ def ai_vision(request):
                         return Response({
                             "nodes": nodes,
                             "edges": edges,
-                            "description": parsed.get("description", f"Clases extraÃ­das con {model}"),
+                            "description": parsed.get("description", f"Clases extraídas con {model}"),
                             "model": f"Gemini Vision ({model})",
                             "classes_found": len(nodes),
                             "relations_found": len(edges),
@@ -452,14 +439,14 @@ def ai_vision(request):
                 errors.append(f"{model}: sobrecargado (503), probando siguiente...")
                 continue
             elif resp.status_code in (400, 403):
-                errors.append(f"{model}: clave invÃ¡lida o sin permisos (HTTP {resp.status_code}) â€” {resp.text[:150]}")
-                break  # No tiene sentido probar mÃ¡s modelos con la misma clave invÃ¡lida
+                errors.append(f"{model}: clave inválida o sin permisos (HTTP {resp.status_code}) — {resp.text[:150]}")
+                break  # No tiene sentido probar más modelos con la misma clave inválida
             else:
-                errors.append(f"{model}: HTTP {resp.status_code} â€” {resp.text[:120]}")
+                errors.append(f"{model}: HTTP {resp.status_code} — {resp.text[:120]}")
         except Exception as e:
             errors.append(f"{model}: {str(e)}")
 
-    error_detail = "\n".join(f"â€¢ {e}" for e in errors)
+    error_detail = "\n".join(f"• {e}" for e in errors)
     return Response(
         {
             "nodes": [], "edges": [], "description": "", "model": "none",
@@ -468,21 +455,21 @@ def ai_vision(request):
                 f"No se pudieron extraer clases de la imagen.\n\n"
                 f"Detalles:\n{error_detail}\n\n"
                 f"Sugerencias:\n"
-                f"1. Verifica que la GEMINI_API_KEY en el .env sea vÃ¡lida.\n"
-                f"2. ObtÃ©n una clave gratis en https://aistudio.google.com\n"
-                f"3. Usa una imagen nÃ­tida con texto legible."
+                f"1. Verifica que la GEMINI_API_KEY en el .env sea válida.\n"
+                f"2. Obtén una clave gratis en https://aistudio.google.com\n"
+                f"3. Usa una imagen nítida con texto legible."
             ),
         },
         status=status.HTTP_200_OK,
     )
 
 
-# â”€â”€â”€ DiagnÃ³stico de Gemini â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── Diagnóstico de Gemini ─────────────────────────────────────────────────────
 
 @api_view(["GET"])
 @permission_classes([permissions.IsAuthenticated])
 def ai_diagnose(request):
-    """GET /api/ai/diagnose/ â€” Verifica el estado de Gemini."""
+    """GET /api/ai/diagnose/ — Verifica el estado de Gemini."""
     results = {}
 
     gemini_key = _get_gemini_key()
@@ -494,22 +481,22 @@ def ai_diagnose(request):
     else:
         try:
             payload = {"contents": [{"parts": [{"text": "Responde solo: OK"}]}]}
-            resp = _gemini_post("gemini-3.5-flash", payload, gemini_key, timeout=15)
+            resp = _gemini_post(settings.GEMINI_DIAGNOSE_MODEL, payload, gemini_key, timeout=15)
             if resp.status_code == 200:
                 results["gemini"] = {
                     "status": "ok",
-                    "model": "gemini-3.5-flash",
+                    "model": settings.GEMINI_DIAGNOSE_MODEL,
                     "detail": "Gemini disponible y funcionando correctamente",
                 }
             elif resp.status_code == 400:
                 results["gemini"] = {
                     "status": "error",
-                    "detail": f"Clave invÃ¡lida o mal formateada: {resp.text[:200]}",
+                    "detail": f"Clave inválida o mal formateada: {resp.text[:200]}",
                 }
             elif resp.status_code == 403:
                 results["gemini"] = {
                     "status": "error",
-                    "detail": "Clave sin permisos o invÃ¡lida (403). Genera una nueva en aistudio.google.com",
+                    "detail": "Clave sin permisos o inválida (403). Genera una nueva en aistudio.google.com",
                 }
             else:
                 results["gemini"] = {

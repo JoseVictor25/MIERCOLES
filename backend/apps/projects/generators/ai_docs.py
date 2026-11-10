@@ -1,12 +1,8 @@
-import os
 import google.generativeai as genai
 from django.conf import settings
 
 def _get_gemini_key():
-    from dotenv import load_dotenv
-    from pathlib import Path
-    load_dotenv(Path(settings.BASE_DIR) / ".env", override=True)
-    key = getattr(settings, "GEMINI_API_KEY", "") or os.getenv("GEMINI_API_KEY", "")
+    key = settings.GEMINI_API_KEY
     return key.strip() if key else ""
 
 def generate_ai_docs_for_class(class_name: str, attributes: list, methods: list, project_name: str) -> dict:
@@ -28,7 +24,7 @@ def generate_ai_docs_for_class(class_name: str, attributes: list, methods: list,
     genai.configure(api_key=key)
     
     # Usar un modelo rápido
-    model = genai.GenerativeModel('gemini-3.5-flash-lite')
+    model = genai.GenerativeModel(settings.GEMINI_DOCS_MODEL)
 
     attrs_str = ", ".join([f"{a['type']} {a['name']}" for a in attributes])
     methods_str = ", ".join([f"{m['return_type']} {m['name']}()" for m in methods])

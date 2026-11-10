@@ -148,7 +148,12 @@ MEDIA_ROOT = BASE_DIR / "media"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # ─── IA — configuración híbrida (Groq + Ollama fallback) ──────────────────────
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_TEXT_MODEL = os.getenv("OLLAMA_TEXT_MODEL", "llama3.2")
-OLLAMA_VISION_MODEL = os.getenv("OLLAMA_VISION_MODEL", "llava")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODELS = [
+    "gemini-3.6-flash",
+    "gemini-3-flash-preview",
+    "gemini-flash-latest",
+    "gemini-flash-lite-latest",
+]
+GEMINI_DIAGNOSE_MODEL = "gemini-3.5-flash"
+GEMINI_DOCS_MODEL = "gemini-3.5-flash-lite"

@@ -22,7 +22,7 @@ public class {{ entity.name }}Mapper {
         {{ entity.name }}ResponseDTO dto = new {{ entity.name }}ResponseDTO();
         dto.setId(entity.getId());
 
-{% for attr in entity.attributes %}
+{% for attr in entity.all_attributes %}
     {% if not attr.is_id %}
         dto.{{ attr.setter_name }}(entity.{{ attr.getter_name }}());
     {% endif %}
@@ -32,7 +32,7 @@ public class {{ entity.name }}Mapper {
     {% if not rel.is_collection %}
         if (entity.{{ rel.getter_name }}() != null) {
             dto.{{ rel.fk_setter_name }}(entity.{{ rel.getter_name }}().getId());
-            dto.set{{ rel.fk_label_field|capitalize }}(entity.{{ rel.getter_name }}().toString());
+            dto.{{ rel.fk_label_setter_name }}({% if rel.fk_label_getter_name %}entity.{{ rel.getter_name }}().{{ rel.fk_label_getter_name }}(){% else %}entity.{{ rel.getter_name }}().toString(){% endif %});
         }
     {% endif %}
 {% endfor %}
@@ -49,7 +49,7 @@ public class {{ entity.name }}Mapper {
         }
 
         {{ entity.name }} entity = new {{ entity.name }}();
-{% for attr in entity.attributes %}
+{% for attr in entity.all_attributes %}
     {% if not attr.is_id or not attr.is_generated %}
         entity.{{ attr.setter_name }}(dto.{{ attr.getter_name }}());
     {% endif %}
@@ -66,7 +66,7 @@ public class {{ entity.name }}Mapper {
             return;
         }
 
-{% for attr in entity.attributes %}
+{% for attr in entity.all_attributes %}
     {% if not attr.is_id or not attr.is_generated %}
         entity.{{ attr.setter_name }}(dto.{{ attr.getter_name }}());
     {% endif %}

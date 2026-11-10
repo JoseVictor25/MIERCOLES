@@ -19,7 +19,7 @@ public class {{ entity.name }}RequestDTO implements Serializable {
     private static final long serialVersionUID = 1L;
 
     // Campos de entrada
-{% for attr in entity.attributes %}
+{% for attr in entity.all_attributes %}
     {% if not attr.is_id or not attr.is_generated %}
     private {{ attr.java_type }} {{ attr.field_name }};
     {% endif %}
@@ -36,7 +36,7 @@ public class {{ entity.name }}RequestDTO implements Serializable {
     }
 
     // Getters y Setters
-{% for attr in entity.attributes %}
+{% for attr in entity.all_attributes %}
     {% if not attr.is_id or not attr.is_generated %}
     public {{ attr.java_type }} {{ attr.getter_name }}() {
         return {{ attr.field_name }};

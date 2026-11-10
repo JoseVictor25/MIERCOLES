@@ -43,6 +43,53 @@ def generated_files(diagram, **options):
 
 
 class SpringGeneratorRegressionTests(SimpleTestCase):
+    def test_inherited_dtos_mapper_and_relation_label(self):
+        diagram = sample_diagram()
+        diagram["nodes"][-1]["data"]["attributes"] = []
+        files = generated_files(diagram)
+
+        def java_file(suffix):
+            return next(content for path, content in files.items() if path.endswith(suffix))
+
+        request = java_file("/dto/ClienteRequestDTO.java")
+        response = java_file("/dto/ClienteResponseDTO.java")
+        mapper = java_file("/mapper/ClienteMapper.java")
+        pedido_response = java_file("/dto/PedidoResponseDTO.java")
+        pedido_mapper = java_file("/mapper/PedidoMapper.java")
+        union = java_file("/entity/PedidoProducto.java")
+
+        for dto in (request, response):
+            for field_type, field in (("Integer", "ci"), ("String", "nombre"),
+                                      ("String", "correo")):
+                self.assertIn(f"private {field_type} {field};", dto)
+        for field in ("Ci", "Nombre", "Correo"):
+            self.assertIn(f"dto.set{field}(entity.get{field}());", mapper)
+            self.assertIn(f"entity.set{field}(dto.get{field}());", mapper)
+        self.assertIn("private String clienteNombre;", pedido_response)
+        self.assertIn("getClienteNombre()", pedido_response)
+        self.assertIn("setClienteNombre(String clienteNombre)", pedido_response)
+        self.assertIn("dto.setClienteNombre(entity.getCliente().getNombre());", pedido_mapper)
+        self.assertIn("@ManyToOne", union)
+        self.assertIn("private Pedido pedido;", union)
+        self.assertIn("private Producto producto;", union)
+
+    def test_attributes_from_grandparent_are_included_once(self):
+        diagram = sample_diagram()
+        diagram["nodes"].insert(0, {"id": "ancestro", "type": "classNode", "data": {
+            "name": "Ancestro", "attributes": [{"name": "codigoFiscal", "data_type": "String"}],
+            "methods": [],
+        }})
+        diagram["edges"].append({"id": "segunda-herencia", "source": "persona",
+                                 "target": "ancestro", "data": {"relation_type": "inheritance"}})
+        files = generated_files(diagram)
+        request = next(content for path, content in files.items()
+                       if path.endswith("/dto/ClienteRequestDTO.java"))
+        mapper = next(content for path, content in files.items()
+                      if path.endswith("/mapper/ClienteMapper.java"))
+        self.assertEqual(request.count("private String codigoFiscal;"), 1)
+        self.assertIn("dto.setCodigoFiscal(entity.getCodigoFiscal());", mapper)
+        self.assertIn("entity.setCodigoFiscal(dto.getCodigoFiscal());", mapper)
+
     def test_inheritance_cardinalities_and_association_class(self):
         files = generated_files(sample_diagram())
         java = {path: content for path, content in files.items() if path.endswith(".java")}

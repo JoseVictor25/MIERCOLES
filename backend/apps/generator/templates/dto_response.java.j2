@@ -21,7 +21,7 @@ public class {{ entity.name }}ResponseDTO implements Serializable {
     private Long id;
 
     // Atributos
-{% for attr in entity.attributes %}
+{% for attr in entity.all_attributes %}
     {% if not attr.is_id %}
     private {{ attr.java_type }} {{ attr.field_name }};
     {% endif %}
@@ -47,7 +47,7 @@ public class {{ entity.name }}ResponseDTO implements Serializable {
         this.id = id;
     }
 
-{% for attr in entity.attributes %}
+{% for attr in entity.all_attributes %}
     {% if not attr.is_id %}
     public {{ attr.java_type }} {{ attr.getter_name }}() {
         return {{ attr.field_name }};
@@ -69,11 +69,11 @@ public class {{ entity.name }}ResponseDTO implements Serializable {
         this.{{ rel.fk_id_field }} = {{ rel.fk_id_field }};
     }
 
-    public String get{{ rel.fk_label_field|capitalize }}() {
+    public String get{{ rel.fk_label_field[:1]|upper }}{{ rel.fk_label_field[1:] }}() {
         return {{ rel.fk_label_field }};
     }
 
-    public void set{{ rel.fk_label_field|capitalize }}(String {{ rel.fk_label_field }}) {
+    public void {{ rel.fk_label_setter_name }}(String {{ rel.fk_label_field }}) {
         this.{{ rel.fk_label_field }} = {{ rel.fk_label_field }};
     }
 

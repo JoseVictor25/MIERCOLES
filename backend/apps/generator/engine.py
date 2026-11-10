@@ -228,6 +228,7 @@ class SpringGenerator:
                 "join_column": f"{to_snake_case(field)}_id",
                 "fk_id_field": f"{field}Id", "fk_label_field": f"{field}Nombre",
                 "fk_getter_name": f"get{cap}Id", "fk_setter_name": f"set{cap}Id",
+                "fk_label_setter_name": f"set{cap}Nombre",
                 "is_collection": False, "getter_name": f"get{cap}", "setter_name": f"set{cap}",
             })
             return field
@@ -291,6 +292,33 @@ class SpringGenerator:
             else:
                 add_to_one(source, target, target_role)
 
+        def resolve_attributes(entity, visiting=None):
+            """Reúne atributos de toda la herencia; la clase hija prevalece si repite un nombre."""
+            visiting = set() if visiting is None else visiting
+            if entity["name"] in visiting:
+                return list(entity["attributes"])
+            parent = entities_by_name.get(entity["parent_class"])
+            inherited = resolve_attributes(parent, visiting | {entity["name"]}) if parent else []
+            fields = {attr["field_name"]: attr for attr in inherited}
+            fields.update((attr["field_name"], attr) for attr in entity["attributes"])
+            return list(fields.values())
+
+        for entity in entities_by_id.values():
+            entity["all_attributes"] = resolve_attributes(entity)
+            for java_type, flag in (("LocalDate", "has_dates"),
+                                    ("LocalDateTime", "has_datetimes"),
+                                    ("BigDecimal", "has_bigdecimals")):
+                entity[flag] = any(attr["java_type"] == java_type
+                                   for attr in entity["all_attributes"])
+        for entity in entities_by_id.values():
+            for rel in entity["relationships"]:
+                if rel["type"] not in ("ManyToOne", "OneToOne"):
+                    continue
+                target = entities_by_name[rel["target_class"]]
+                label = next((attr for attr in target["all_attributes"]
+                              if attr["field_name"].lower() == "nombre"), None)
+                rel["fk_label_getter_name"] = label["getter_name"] if label else None
+
         return list(entities_by_id.values())
 
     def generate_zip_bytes(self) -> bytes:
@@ -327,6 +355,7 @@ class SpringGenerator:
                         "is_generated": False,
                     }
                 ],
+                "all_attributes": [],
                 "relationships": [],
                 "parent_class": None,
                 "is_parent_in_inheritance": False,
@@ -337,6 +366,7 @@ class SpringGenerator:
                 "has_collections": False,
                 "ai_docs": {},
             }]
+            entities[0]["all_attributes"] = entities[0]["attributes"]
 
         package_path = self.base_package.replace(".", "/")
         root_dir = f"{self.artifact_id}"

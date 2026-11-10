@@ -257,8 +257,10 @@ function DiagramPageInner() {
         nodes: sanitizedNodes,
         edges: sanitizedEdges,
       });
+      return true;
     } catch {
       toast.error('Error al sincronizar con PostgreSQL');
+      return false;
     }
   }, [id, nodes, edges]);
 
@@ -2055,6 +2057,9 @@ function DiagramPageInner() {
         isOpen={showGenerateModal}
         onClose={() => setShowGenerateModal(false)}
         project={currentProject}
+        nodes={nodes}
+        edges={edges}
+        onSaveBeforeGenerate={() => saveDiagram(nodesRef.current, edgesRef.current)}
       />
 
       {/* CU-08 — Modal de historial de versiones */}

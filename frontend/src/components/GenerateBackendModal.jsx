@@ -3,7 +3,7 @@ import { Download, FileCode, Package, Server, Layers, X, CheckCircle2 } from 'lu
 import { toast } from 'react-hot-toast';
 import api from '../api/axios';
 
-export default function GenerateBackendModal({ isOpen, onClose, project }) {
+export default function GenerateBackendModal({ isOpen, onClose, project, nodes = [], edges = [], onSaveBeforeGenerate }) {
   const [groupId, setGroupId] = useState('com.example');
   const [artifactId, setArtifactId] = useState('');
   const [includeAiDocs, setIncludeAiDocs] = useState(false);
@@ -21,8 +21,6 @@ export default function GenerateBackendModal({ isOpen, onClose, project }) {
 
   if (!isOpen || !project) return null;
 
-  const nodes = project.datos_diagrama?.nodes || [];
-  const edges = project.datos_diagrama?.edges || [];
   const classCount = nodes.length;
   const relationCount = edges.length;
 
@@ -32,6 +30,11 @@ export default function GenerateBackendModal({ isOpen, onClose, project }) {
     const toastId = toast.loading('Generando proyecto Spring Boot en 5 capas...');
 
     try {
+      const saved = await onSaveBeforeGenerate();
+      if (!saved) {
+        toast.error('No se pudo guardar el diagrama. No se generó el backend.', { id: toastId });
+        return;
+      }
       const response = await api.post(
         `projects/${project.id}/generate/spring-boot/`,
         {

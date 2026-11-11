@@ -61,7 +61,9 @@ export default function HelpChatBot() {
         { role: 'assistant', content: res.data.reply, model: res.data.model },
       ]);
     } catch (err) {
-      const errMsg = err.response?.data?.detail 
+      const errMsg = ([503, 404].includes(err.response?.status)
+        ? 'Inicia el servidor local de LM Studio y verifica los modelos' : null)
+        || err.response?.data?.detail
         || (err.code === 'ECONNABORTED' ? 'Tiempo de espera agotado al conectar con la IA.' : null)
         || (err.response?.status === 504 ? 'Tiempo de espera agotado en el servidor (504).' : null)
         || (err.response?.status === 502 ? 'Servidor backend no disponible (502).' : null)
@@ -185,7 +187,7 @@ export default function HelpChatBot() {
             </div>
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 700, fontSize: 14, color: '#f1f5f9' }}>Guía de UMLCraft</div>
-              <div style={{ fontSize: 11, color: '#818cf8', marginTop: 1 }}>Asistente de ayuda · Powered by Gemini</div>
+              <div style={{ fontSize: 11, color: '#818cf8', marginTop: 1 }}>Asistente de ayuda · IA local</div>
             </div>
             <button
               onClick={() => setIsOpen(false)}

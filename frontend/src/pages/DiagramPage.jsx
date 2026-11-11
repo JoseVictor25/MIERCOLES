@@ -29,7 +29,9 @@ import CollabStatus from '../components/CollabStatus';
 import CollaboratorsModal from '../components/CollaboratorsModal';
 import GenerateBackendModal from '../components/GenerateBackendModal';
 import HistoryModal from '../components/HistoryModal';
-import AIChatPanel from '../components/AIChatPanel';
+import ProjectChatTabs from '../components/ProjectChatTabs';
+import { useChatStore } from '../store/chatStore';
+import { applyAIUpdates } from '../utils/applyAIUpdates';
 import ImageToUMLModal from '../components/ImageToUMLModal';
 import StarUMLMenuBar from '../components/StarUMLMenuBar';
 import StarUMLToolbox from '../components/StarUMLToolbox';
@@ -179,6 +181,15 @@ function DiagramPageInner() {
   const [showGenerateModal, setShowGenerateModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showAIPanel, setShowAIPanel] = useState(false);
+  const unreadChat = useChatStore(state => state.unreadByProject[String(id)] || 0);
+  const aiSettings = useChatStore(state => state.aiSettingsByProject[String(id)]);
+  const participants = {
+    ...(currentProject?.owner?.id ? { [currentProject.owner.id]: currentProject.owner.username } : {}),
+    ...Object.fromEntries((currentProject?.collaborators || []).filter(c => c.user?.id)
+      .map(c => [c.user.id, c.user.username])),
+  };
+  const loadChatHistory = useChatStore(state => state.loadHistory);
+  useEffect(() => { if (id) loadChatHistory(id); }, [id, loadChatHistory]);
   const [showImageModal, setShowImageModal] = useState(false);
   const [selectedNode, setSelectedNode] = useState(null);
   const [selectedRelType, setSelectedRelType] = useState('select');
@@ -279,11 +290,13 @@ function DiagramPageInner() {
     setTimeout(() => { isApplyingRemote.current = false; }, 100);
   }, [setNodes, setEdges]);
 
-  const { wsStatus, collaborators, sendDiagramUpdate, sendCursorMove } = useCollaboration({
+  const { wsStatus, collaborators, sendDiagramUpdate, sendCursorMove, sendChatMessage,
+    sendProposalDecision, sendProposalResult } = useCollaboration({
     diagramId: id,
     nodes,
     edges,
     onRemoteUpdate: handleRemoteUpdate,
+    onChatMessage: message => useChatStore.getState().appendMessage(id, message),
     enabled: !loading,
   });
 
@@ -1227,134 +1240,33 @@ function DiagramPageInner() {
 
   // ── Aplicar actualizaciones de la IA desde el Chat ─────────────────────────
   const handleApplyAIUpdates = useCallback((updates) => {
-    if (!updates || updates.length === 0) return;
-    takeSnapshot();
-
-    let currentNodes = [...nodes];
-    let currentEdges = [...edges];
-    let hasChanges = false;
-
-    updates.forEach(update => {
-      if (update.action === 'add_class') {
-        const nodeId = `class-ai-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-        // Posicionar en el centro de la vista
-        const viewportEl = document.querySelector('.react-flow__viewport');
-        let x = 300, y = 200;
-        if (viewportEl) {
-           const transform = viewportEl.style.transform;
-           const match = /translate\(([^p]+)px,\s*([^p]+)px\)\s*scale\(([^)]+)\)/.exec(transform);
-           if (match) {
-             const scale = parseFloat(match[3]);
-             const tx = parseFloat(match[1]);
-             const ty = parseFloat(match[2]);
-             const canvasCenter = document.querySelector('.react-flow').getBoundingClientRect();
-             x = (canvasCenter.width / 2 - tx) / scale;
-             y = (canvasCenter.height / 2 - ty) / scale;
-           }
-        }
-        currentNodes.push({
-          id: nodeId,
-          type: 'classNode',
-          position: { x: x + (Math.random() * 100 - 50), y: y + (Math.random() * 100 - 50) },
-          data: {
-            id: nodeId,
-            name: update.name || 'NuevaClase',
-            is_abstract: false,
-            attributes: [],
-            methods: [],
-          }
-        });
-        hasChanges = true;
-      }
-      else if (update.action === 'add_attribute') {
-        const nodeIndex = currentNodes.findIndex(n => n.data.name.toLowerCase() === (update.class_name || '').toLowerCase());
-        if (nodeIndex !== -1) {
-          const targetNode = currentNodes[nodeIndex];
-          const newAttr = {
-            id: `attr-ai-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-            name: update.attr_name || 'nuevoAtributo',
-            data_type: update.data_type || 'String',
-            visibility: update.visibility || '-',
-          };
-          currentNodes[nodeIndex] = {
-            ...targetNode,
-            data: {
-              ...targetNode.data,
-              attributes: [...(targetNode.data.attributes || []), newAttr]
-            }
-          };
-          hasChanges = true;
-        }
-      }
-      else if (update.action === 'add_relation') {
-        const srcNode = currentNodes.find(n => n.data.name.toLowerCase() === (update.source_class || '').toLowerCase());
-        const tgtNode = currentNodes.find(n => n.data.name.toLowerCase() === (update.target_class || '').toLowerCase());
-        
-        if (srcNode && tgtNode) {
-          const edgeId = `edge-ai-${srcNode.id}-${tgtNode.id}-${Date.now()}`;
-          currentEdges.push({
-            id: edgeId,
-            type: 'umlEdge',
-            source: srcNode.id,
-            target: tgtNode.id,
-            reconnectable: true,
-            sourceHandle: 'bottom-source',
-            targetHandle: 'top-target',
-            data: {
-              relation_type: update.relation_type || 'association',
-              sourceMultiplicity: '',
-              targetMultiplicity: '',
-            }
-          });
-          hasChanges = true;
-        }
-      }
-      else if (update.action === 'delete_class') {
-        const nodeIndex = currentNodes.findIndex(n => n.data.name.toLowerCase() === (update.name || '').toLowerCase());
-        if (nodeIndex !== -1) {
-          const removedNodeId = currentNodes[nodeIndex].id;
-          currentNodes.splice(nodeIndex, 1);
-          currentEdges = currentEdges.filter(e => e.source !== removedNodeId && e.target !== removedNodeId);
-          hasChanges = true;
-        }
-      }
-      else if (update.action === 'delete_attribute') {
-        const nodeIndex = currentNodes.findIndex(n => n.data.name.toLowerCase() === (update.class_name || '').toLowerCase());
-        if (nodeIndex !== -1) {
-          const targetNode = currentNodes[nodeIndex];
-          currentNodes[nodeIndex] = {
-            ...targetNode,
-            data: {
-              ...targetNode.data,
-              attributes: (targetNode.data.attributes || []).filter(a => a.name.toLowerCase() !== (update.attr_name || '').toLowerCase())
-            }
-          };
-          hasChanges = true;
-        }
-      }
-      else if (update.action === 'delete_relation') {
-        const srcNode = currentNodes.find(n => n.data.name.toLowerCase() === (update.source_class || '').toLowerCase());
-        const tgtNode = currentNodes.find(n => n.data.name.toLowerCase() === (update.target_class || '').toLowerCase());
-        if (srcNode && tgtNode) {
-          const beforeCount = currentEdges.length;
-          // Eliminar la relación en ambas direcciones (por si la IA invierte origen y destino)
-          currentEdges = currentEdges.filter(e => !(
-            (e.source === srcNode.id && e.target === tgtNode.id) ||
-            (e.source === tgtNode.id && e.target === srcNode.id)
-          ));
-          if (currentEdges.length !== beforeCount) hasChanges = true;
-        }
-      }
-    });
-
-    if (hasChanges) {
-      setNodes(currentNodes);
-      setEdges(currentEdges);
-      saveDiagram(currentNodes, currentEdges);
-      if (!isApplyingRemote.current) sendDiagramUpdate(currentNodes, currentEdges);
-      toast.success('Diagrama actualizado por la IA');
+    const result = applyAIUpdates(nodesRef.current, edgesRef.current, updates);
+    if (result.applied.length) {
+      takeSnapshot();
+      nodesRef.current = result.nodes;
+      edgesRef.current = result.edges;
+      setNodes(result.nodes);
+      setEdges(result.edges);
+      saveDiagram(result.nodes, result.edges);
+      if (!isApplyingRemote.current) sendDiagramUpdate(result.nodes, result.edges);
     }
-  }, [nodes, edges, setNodes, setEdges, saveDiagram, sendDiagramUpdate, takeSnapshot]);
+    return { applied: result.applied, failed: result.failed };
+  }, [setNodes, setEdges, saveDiagram, sendDiagramUpdate, takeSnapshot]);
+
+  const handleApplyProposal = useCallback(async (updates) => {
+    const result = applyAIUpdates(nodesRef.current, edgesRef.current, updates);
+    if (result.applied.length) {
+      const saved = await saveDiagram(result.nodes, result.edges);
+      if (!saved) return { applied: [], failed: updates.map(update => ({ update, reason: 'No se pudo guardar el diagrama.' })) };
+      takeSnapshot();
+      nodesRef.current = result.nodes;
+      edgesRef.current = result.edges;
+      setNodes(result.nodes);
+      setEdges(result.edges);
+      if (!isApplyingRemote.current) sendDiagramUpdate(result.nodes, result.edges);
+    }
+    return { applied: result.applied, failed: result.failed };
+  }, [saveDiagram, takeSnapshot, setNodes, setEdges, sendDiagramUpdate]);
 
   // ── CU-08: Restaurar snapshot ─────────────────────────────────────────────────
   const handleRestoreSnapshot = useCallback((diagramData) => {
@@ -1401,6 +1313,7 @@ function DiagramPageInner() {
         onExportPNG={handleExportPNG}
         onOpenHistory={() => setShowHistoryModal(true)}
         onOpenAssistant={() => setShowAIPanel(true)}
+        chatUnread={showAIPanel ? 0 : unreadChat}
         onOpenImageToUML={() => setShowImageModal(true)}
         onOpenGenerate={() => setShowGenerateModal(true)}
         onOpenCollab={() => setShowCollabModal(true)}
@@ -1585,7 +1498,8 @@ function DiagramPageInner() {
           <CollaboratorCursors collaborators={collaborators} />
 
           {/* Barra de estado de colaboración */}
-          <CollabStatus wsStatus={wsStatus} collaborators={collaborators} />
+          <CollabStatus wsStatus={wsStatus} collaborators={collaborators}
+            participants={participants} aiEnabled={!!aiSettings?.enabled} />
 
           {/* Barra de estado inferior clásica de StarUML */}
           <div
@@ -2079,9 +1993,19 @@ function DiagramPageInner() {
       />
 
       {/* CU-09 — Panel de IA */}
-      <AIChatPanel
+      <ProjectChatTabs
         isOpen={showAIPanel}
         onClose={() => setShowAIPanel(false)}
+        projectId={id}
+        userId={user?.id}
+        canWrite={!!(currentProject?.is_owner || currentProject?.collaborators?.some(c => c.user?.id === user?.id && c.role === 'editor'))}
+        isOwner={!!currentProject?.is_owner}
+        participants={participants}
+        wsStatus={wsStatus}
+        sendChatMessage={sendChatMessage}
+        sendProposalDecision={sendProposalDecision}
+        sendProposalResult={sendProposalResult}
+        onApplyProposal={handleApplyProposal}
         diagramData={{ nodes, edges }}
         onApplyAIUpdates={handleApplyAIUpdates}
       />

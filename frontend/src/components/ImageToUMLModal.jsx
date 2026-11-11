@@ -34,7 +34,7 @@ export default function ImageToUMLModal({ isOpen, onClose, onApply }) {
     if (!file) return;
     const allowed = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'];
     if (!allowed.includes(file.type)) { toast.error('Usa PNG, JPG, WEBP o GIF.'); return; }
-    if (file.size > 10 * 1024 * 1024) { toast.error('Máximo 10 MB.'); return; }
+    if (file.size > 8 * 1024 * 1024) { toast.error('Máximo 8 MB.'); return; }
     setImageFile(file);
     setResult(null);
     const reader = new FileReader();
@@ -55,10 +55,13 @@ export default function ImageToUMLModal({ isOpen, onClose, onApply }) {
       formData.append('image', imageFile);
       const res = await api.post('ai/vision/', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 620000,
       });
       setResult(res.data);
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Error al analizar la imagen.');
+      toast.error([503, 404].includes(err.response?.status)
+        ? 'Inicia el servidor local de LM Studio y verifica los modelos'
+        : (err.response?.data?.detail || 'Error al analizar la imagen.'));
     } finally {
       setLoading(false);
     }
@@ -170,7 +173,7 @@ export default function ImageToUMLModal({ isOpen, onClose, onApply }) {
                   }}>{f}</span>
                 ))}
               </div>
-              <div style={{ fontSize: '11px', color: '#475569', marginTop: '12px' }}>Máximo 10 MB</div>
+              <div style={{ fontSize: '11px', color: '#475569', marginTop: '12px' }}>Máximo 8 MB</div>
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -225,7 +228,7 @@ export default function ImageToUMLModal({ isOpen, onClose, onApply }) {
                         fontSize: '13px', fontWeight: 600, marginBottom: '6px',
                         color: hasError ? '#fca5a5' : hasClasses ? '#6ee7b7' : '#fcd34d',
                       }}>
-                        {hasError ? 'Sin proveedor de visión disponible' : hasClasses ? `${result.nodes.length} clase(s) detectadas` : 'Sin clases detectadas'}
+                        {hasError ? (result.error.includes('tardó demasiado') ? 'Tiempo de espera agotado' : result.error.includes('Falta cargar') ? 'Modelo de visión no disponible' : result.error.includes('servidor local') ? 'Servidor de IA no disponible' : 'No se pudo analizar la imagen') : hasClasses ? `${result.nodes.length} clase(s) detectadas` : 'Sin clases detectadas'}
                       </div>
                       <div style={{ fontSize: '12px', color: '#94a3b8', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
                         {hasError ? result.error : result.description}

@@ -15,7 +15,7 @@ const STATUS_CONFIG = {
   disconnected: { icon: WifiOff, color: '#dc2626', label: 'Sin conexión' },
 };
 
-export default function CollabStatus({ wsStatus, collaborators }) {
+export default function CollabStatus({ wsStatus, collaborators, participants = {}, aiEnabled = false }) {
   const config = STATUS_CONFIG[wsStatus] || STATUS_CONFIG.disconnected;
   const Icon   = config.icon;
   const entries = Object.entries(collaborators);
@@ -55,7 +55,7 @@ export default function CollabStatus({ wsStatus, collaborators }) {
       {entries.map(([userId, collab]) => (
         <div
           key={userId}
-          title={collab.username}
+          title={collab.username || participants[userId] || 'Alguien'}
           style={{
             width:        '26px',
             height:       '26px',
@@ -73,9 +73,16 @@ export default function CollabStatus({ wsStatus, collaborators }) {
             cursor:       'default',
           }}
         >
-          {collab.username?.[0]?.toUpperCase() || '?'}
+          {(collab.username || participants[userId] || 'Alguien')[0].toUpperCase()}
         </div>
       ))}
+
+      {aiEnabled && <div title="Asistente IA · disponible para @ia" style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 5 }}>
+        <span style={{ width: 27, height: 27, borderRadius: '50%', background: '#4f46e5', color: '#fff',
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800,
+          border: '2px solid #fff', boxShadow: '0 1px 5px rgba(79,70,229,.35)' }}>✦</span>
+        <span style={{ fontSize: 10, fontWeight: 800, color: '#4f46e5' }}>IA</span>
+      </div>}
 
       {entries.length > 0 && (
         <span style={{ color: '#64748b', fontSize: '11px', marginLeft: '4px' }}>

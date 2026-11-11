@@ -15,6 +15,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import toast from 'react-hot-toast';
+import { useChatStore } from '../store/chatStore';
 
 // Colores asignados a colaboradores (rotación automática)
 const CURSOR_COLORS = [
@@ -22,7 +23,7 @@ const CURSOR_COLORS = [
   '#7c3aed', '#db2777', '#0891b2', '#65a30d',
 ];
 
-const getColorForUser = (userId) => {
+export const getColorForUser = (userId) => {
   const hash = String(userId).split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
   return CURSOR_COLORS[hash % CURSOR_COLORS.length];
 };
@@ -48,13 +49,15 @@ const CURSOR_THROTTLE_MS = 60; // ms mínimos entre envíos de cursor (~16 fps)
 const RECONNECT_DELAY_MS = 3000;
 const MAX_RECONNECTS = 5;
 
-export function useCollaboration({ diagramId, nodes, edges, onRemoteUpdate, enabled = true }) {
+export function useCollaboration({ diagramId, nodes, edges, onRemoteUpdate, onChatMessage, enabled = true }) {
   const wsRef       = useRef(null);
   const debounceRef = useRef(null);
   const cursorRef   = useRef(0);
   const reconnectCountRef = useRef(0);
   const reconnectTimerRef = useRef(null);
   const isUnmounting = useRef(false);
+  const onChatMessageRef = useRef(onChatMessage);
+  onChatMessageRef.current = onChatMessage;
 
   const [collaborators, setCollaborators] = useState({}); // { userId: { username, x, y, color, lastSeen } }
   const [wsStatus, setWsStatus]           = useState('disconnected'); // 'connecting' | 'connected' | 'disconnected'
@@ -82,6 +85,7 @@ export function useCollaboration({ diagramId, nodes, edges, onRemoteUpdate, enab
       reconnectCountRef.current = 0;
       setWsStatus('connected');
       console.info('[Collab] WebSocket connected — diagram', diagramId);
+      useChatStore.getState().catchUp(diagramId);
     };
 
     ws.onmessage = (event) => {
@@ -89,6 +93,25 @@ export function useCollaboration({ diagramId, nodes, edges, onRemoteUpdate, enab
       try { data = JSON.parse(event.data); } catch { return; }
 
       switch (data.type) {
+        case 'chat_message':
+          if (data.message) onChatMessageRef.current?.(data.message);
+          break;
+
+        case 'chat_message_update':
+          if (data.message) useChatStore.getState().updateMessage(diagramId, data.message);
+          break;
+
+        case 'ai_typing':
+          useChatStore.getState().setTyping(diagramId, data);
+          break;
+
+        case 'ai_settings':
+          useChatStore.getState().setAISettings(diagramId, data.settings);
+          break;
+
+        case 'chat_error':
+          toast.error(data.detail || 'No se pudo enviar el mensaje.');
+          break;
         case 'diagram_update':
           // Otro colaborador envió el estado del diagrama
           if (typeof onRemoteUpdate === 'function') {
@@ -99,7 +122,7 @@ export function useCollaboration({ diagramId, nodes, edges, onRemoteUpdate, enab
             ...prev,
             [data.user_id]: {
               ...(prev[data.user_id] || {}),
-              username: data.username,
+              username: data.username || prev[data.user_id]?.username,
               color: getColorForUser(data.user_id),
               lastSeen: Date.now(),
             },
@@ -111,7 +134,7 @@ export function useCollaboration({ diagramId, nodes, edges, onRemoteUpdate, enab
             ...prev,
             [data.user_id]: {
               ...(prev[data.user_id] || {}),
-              username: data.username,
+              username: data.username || prev[data.user_id]?.username,
               x: data.x,
               y: data.y,
               color: data.color || getColorForUser(data.user_id),
@@ -124,13 +147,13 @@ export function useCollaboration({ diagramId, nodes, edges, onRemoteUpdate, enab
           setCollaborators(prev => {
             // Evitar notificaciones duplicadas si ya estaba en la lista (reconexiones)
             if (!prev[data.user_id]) {
-              toast(`${data.username} ha entrado al diagrama`, { icon: '👋', id: `join-${data.user_id}` });
+              toast(`${data.username || 'Alguien'} ha entrado al diagrama`, { icon: '👋', id: `join-${data.user_id}` });
             }
             return {
               ...prev,
               [data.user_id]: {
                 ...(prev[data.user_id] || {}),
-                username: data.username,
+                username: data.username || prev[data.user_id]?.username,
                 color: getColorForUser(data.user_id),
                 x: 0,
                 y: 0,
@@ -221,6 +244,29 @@ export function useCollaboration({ diagramId, nodes, edges, onRemoteUpdate, enab
     ws.send(JSON.stringify({ type: 'cursor_move', x, y, color }));
   }, []);
 
+  const sendChatMessage = useCallback((content) => {
+    const ws = wsRef.current;
+    const text = typeof content === 'string' ? content.trim() : '';
+    if (!ws || ws.readyState !== WebSocket.OPEN || !text || text.length > 2000) return false;
+    ws.send(JSON.stringify({ type: 'chat_message', content: text }));
+    return true;
+  }, []);
+
+  const sendProposalDecision = useCallback((messageId, decision) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    ws.send(JSON.stringify({ type: 'proposal_decision', message_id: messageId, decision }));
+    return true;
+  }, []);
+
+  const sendProposalResult = useCallback((messageId, applied, failed) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    ws.send(JSON.stringify({ type: 'proposal_result', message_id: messageId,
+      applied, failed: failed.map(item => ({ reason: item.reason })) }));
+    return true;
+  }, []);
+
   // ── Limpiar colaboradores inactivos (> 10 s sin señal) ────────────────────
   useEffect(() => {
     const interval = setInterval(() => {
@@ -241,5 +287,8 @@ export function useCollaboration({ diagramId, nodes, edges, onRemoteUpdate, enab
     collaborators,
     sendDiagramUpdate,
     sendCursorMove,
+    sendChatMessage,
+    sendProposalDecision,
+    sendProposalResult,
   };
 }

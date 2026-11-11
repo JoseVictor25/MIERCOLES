@@ -22,7 +22,7 @@ Copy-Item .env.example .env
 
 En Linux o macOS usa `source venv/bin/activate`, `cp .env.example .env`, `python manage.py migrate` y `daphne -b 127.0.0.1 -p 8000 config.asgi:application`.
 
-`backend/.env.example` habilita desarrollo con `DEBUG=True` y una clave de ejemplo: reemplázala. Si `DEBUG=False`, `SECRET_KEY` es obligatoria. El esquema se crea con `manage.py migrate`; no se usa un script SQL manual. `GEMINI_API_KEY` es opcional y solo hace falta para IA. La generación Spring Boot sin JavaDoc asistido funciona sin esa clave.
+`backend/.env.example` habilita desarrollo con `DEBUG=True` y una clave de ejemplo: reemplázala. Si `DEBUG=False`, `SECRET_KEY` es obligatoria. El esquema se crea con `manage.py migrate`; no se usa un script SQL manual. La IA usa un servidor local compatible con OpenAI.
 
 ### PostgreSQL opcional
 
@@ -50,6 +50,20 @@ Abre la URL que muestre Vite, habitualmente `http://localhost:5173`. Para verifi
 npm run build
 ```
 
-El generador Spring Boot usa `backend/apps/generator/engine.py` con plantillas Jinja2. Genera herencia JOINED, relaciones 1..N con clave foránea en el lado muchos y N..M con entidad de asociación cuando el diagrama enlaza `associationClassId`. Conserva los atributos de esa clase. Las autorrelaciones ambiguas se omiten con avisos en el log y en el README del ZIP; para generarlas se requieren `sourceRole` y `targetRole`. El editor avisa si se intenta conectar una clase consigo misma. La opción JavaDoc asistida por IA requiere `GEMINI_API_KEY`.
+El generador Spring Boot usa `backend/apps/generator/engine.py` con plantillas Jinja2. Genera herencia JOINED, relaciones 1..N con clave foránea en el lado muchos y N..M con entidad de asociación cuando el diagrama enlaza `associationClassId`. Conserva los atributos de esa clase. Las autorrelaciones ambiguas se omiten con avisos en el log y en el README del ZIP; para generarlas se requieren `sourceRole` y `targetRole`. El editor avisa si se intenta conectar una clase consigo misma. Si falla el JavaDoc asistido, el ZIP se genera con un aviso.
 
 Antes de generar desde el modal, el editor guarda el estado visible. Si ese guardado falla, no solicita el ZIP. La colaboración usa una capa de canales en memoria y requiere un solo proceso. Lee `RESUMEN_GENERAL_SOFTWARE.md` para los demás permisos y límites actuales.
+
+## IA local
+
+En LM Studio, descarga o importa los modelos de texto y visi?n, activa el servidor local en el puerto 1235 y habilita la carga bajo demanda. Consulta `http://localhost:1235/v1/models` y copia los identificadores reales en `backend/.env`. El primer pedido puede tardar mientras se carga el modelo (GPU de 4 GB).
+
+```dotenv
+LLM_BASE_URL=http://localhost:1235/v1
+LLM_TEXT_MODEL=qwen2.5-3b-instruct
+LLM_VISION_MODEL=qwen2.5-vl-3b-instruct
+LLM_API_KEY=lm-studio
+LLM_TIMEOUT=180
+```
+
+Reinicia Django después de cambiar variables. Para Ollama usa `LLM_BASE_URL=http://localhost:11434/v1` y los nombres que entregue `GET /v1/models`; vLLM usa su URL compatible. `GET /api/ai/diagnose/` requiere autenticación y muestra la disponibilidad del servidor y modelos.

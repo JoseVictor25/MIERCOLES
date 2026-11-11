@@ -1,0 +1,223 @@
+"""Pruebas del historial y de la difusión del chat compartido."""
+
+from asgiref.sync import async_to_sync
+import asyncio
+from unittest.mock import patch
+from channels.testing import WebsocketCommunicator
+from django.contrib.auth import get_user_model
+from django.test import TransactionTestCase
+from rest_framework.test import APIClient
+
+from apps.projects.models import Project, ProjectCollaborator
+from apps.realtime.consumers import DiagramConsumer
+from .models import ChatMessage, ProjectAISettings
+from .ai_worker import ROOM_DIAGRAMS, _answer, _context, _prompt, enqueue, has_mention
+from .decisions import decide, record_result
+
+
+class ChatTests(TransactionTestCase):
+    def setUp(self):
+        ROOM_DIAGRAMS.clear()
+        user_model = get_user_model()
+        self.owner = user_model.objects.create_user(username="owner", email="owner@example.com", password="clave")
+        self.editor = user_model.objects.create_user(username="editor", email="editor@example.com", password="clave")
+        self.viewer = user_model.objects.create_user(username="viewer", email="viewer@example.com", password="clave")
+        self.other = user_model.objects.create_user(username="other", email="other@example.com", password="clave")
+        self.project = Project.objects.create(name="Proyecto", owner=self.owner)
+        ProjectCollaborator.objects.create(project=self.project, user=self.editor, role="editor")
+        ProjectCollaborator.objects.create(project=self.project, user=self.viewer, role="viewer")
+        self.client = APIClient()
+
+    def test_historial_paginado_y_permisos(self):
+        for index in range(5):
+            ChatMessage.objects.create(project=self.project, author=self.owner, content=f"Mensaje {index}")
+        self.client.force_authenticate(user=self.viewer)
+        recent = self.client.get(f"/api/projects/{self.project.id}/chat/?limit=2")
+        self.assertEqual(recent.status_code, 200)
+        self.assertEqual([m["content"] for m in recent.data["messages"]], ["Mensaje 3", "Mensaje 4"])
+        self.assertTrue(recent.data["has_more"])
+        before = recent.data["messages"][0]["id"]
+        older = self.client.get(f"/api/projects/{self.project.id}/chat/?limit=2&before={before}")
+        self.assertEqual([m["content"] for m in older.data["messages"]], ["Mensaje 1", "Mensaje 2"])
+        after = self.client.get(f"/api/projects/{self.project.id}/chat/?limit=2&after={older.data['messages'][-1]['id']}")
+        self.assertEqual([m["content"] for m in after.data["messages"]], ["Mensaje 3", "Mensaje 4"])
+        self.client.force_authenticate(user=self.other)
+        self.assertIn(self.client.get(f"/api/projects/{self.project.id}/chat/").status_code, (403, 404))
+        self.client.force_authenticate(user=self.owner)
+        self.assertEqual(self.client.get("/api/projects/999999/chat/").status_code, 404)
+
+    def test_websocket_persistencia_difusion_y_rechazos(self):
+        async_to_sync(self._websocket_scenario)()
+        self.assertEqual(list(ChatMessage.objects.filter(project=self.project).values_list("content", flat=True)), ["Hola equipo"])
+
+    async def _websocket_scenario(self):
+        async def connect(user):
+            client = WebsocketCommunicator(DiagramConsumer.as_asgi(), f"/ws/diagram/{self.project.id}/")
+            client.scope["user"] = user
+            client.scope["url_route"] = {"kwargs": {"diagram_id": str(self.project.id)}}
+            accepted, _ = await client.connect()
+            self.assertTrue(accepted)
+            return client
+
+        owner = await connect(self.owner)
+        await owner.receive_json_from()  # user_join propio
+        editor = await connect(self.editor)
+        await owner.receive_json_from()  # user_join editor
+        await editor.receive_json_from()  # user_join propio
+        viewer = await connect(self.viewer)
+        await owner.receive_json_from()
+        await editor.receive_json_from()
+        await viewer.receive_json_from()
+
+        await owner.send_json_to({"type": "chat_message", "content": "  Hola equipo  "})
+        for client in (owner, editor, viewer):
+            event = await client.receive_json_from()
+            self.assertEqual(event["type"], "chat_message")
+            self.assertEqual(event["message"]["content"], "Hola equipo")
+            self.assertEqual(event["message"]["username"], "owner")
+        await viewer.send_json_to({"type": "chat_message", "content": "@ia No permitido"})
+        self.assertEqual((await viewer.receive_json_from())["detail"], "Solo lectura")
+        for content in ("   ", "x" * 2001):
+            await editor.send_json_to({"type": "chat_message", "content": content})
+            self.assertEqual((await editor.receive_json_from())["type"], "chat_error")
+        for client in (viewer, editor, owner):
+            await client.disconnect()
+
+    def test_mencion_y_configuracion_solo_dueño(self):
+        self.assertTrue(has_mention("Hola @IA, revisa esto"))
+        self.assertFalse(has_mention("hola@iax"))
+        url = f"/api/projects/{self.project.id}/ai-settings/"
+        self.client.force_authenticate(user=self.viewer)
+        self.assertEqual(self.client.get(url).data["mode"], "advisor")
+        self.assertEqual(self.client.patch(url, {"mode": "proposer"}, format="json").status_code, 403)
+        self.client.force_authenticate(user=self.owner)
+        self.assertEqual(self.client.patch(url, {"mode": "proposer", "persona": "moderator"}, format="json").status_code, 200)
+        self.assertEqual(ProjectAISettings.objects.get(project=self.project).persona, "moderator")
+
+    def test_contexto_individual_y_modo_asesor(self):
+        ChatMessage.objects.create(project=self.project, author=self.editor, content="@ia pregunta ajena")
+        ChatMessage.objects.create(project=self.project, author=self.owner, content="@ia mi primera pregunta")
+        ChatMessage.objects.create(project=self.project, is_ai=True, reply_to_user=self.owner, content="Respuesta propia")
+        current = ChatMessage.objects.create(project=self.project, author=self.owner, content="@ia agrega Factura")
+        _, _, mode, persona, individual, room = async_to_sync(_context)(self.project.id, self.owner.id, current.id)
+        prompt = _prompt("owner", "owner", "agrega Factura", {}, persona, mode, individual, room)
+        own_section = prompt.split("Últimos intercambios individuales:")[1].split("Mensajes recientes de la sala:")[0]
+        self.assertIn("Te consulta owner (rol owner)", prompt)
+        self.assertIn("mi primera pregunta", own_section)
+        self.assertIn("Respuesta propia", own_section)
+        self.assertNotIn("pregunta ajena", own_section)
+
+        class Layer:
+            def __init__(self):
+                self.events = []
+
+            async def group_send(self, group, event):
+                self.events.append(event)
+
+        layer = Layer()
+        response = '{"reply":"Agregué la clase","updates":[{"action":"add_class","name":"Factura"}]}'
+        with patch("apps.chat.ai_worker.llm.chat", return_value=response) as chat:
+            async_to_sync(_answer)(self.project.id, self.owner.id, "owner", "owner", current.id, layer)
+        self.assertIn("Te consulta owner", chat.call_args.args[0][0]["content"])
+        answer = ChatMessage.objects.filter(is_ai=True).order_by("-id").first()
+        self.assertEqual(answer.kind, "text")
+        self.assertEqual(answer.meta, {})
+        self.assertEqual(answer.reply_to_user_id, self.owner.id)
+        self.assertIn("no se aplicaron cambios", answer.content)
+
+    def test_cola_ordenada_y_un_pedido_pendiente_por_usuario(self):
+        async_to_sync(self._queue_scenario)()
+
+    async def _queue_scenario(self):
+        class Layer:
+            async def group_send(self, group, event):
+                pass
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+        order = []
+
+        async def fake_answer(project_id, user_id, username, role, message_id, layer):
+            order.append(username)
+            if username == "owner":
+                started.set()
+                await release.wait()
+
+        with patch("apps.chat.ai_worker._answer", side_effect=fake_answer):
+            self.assertIsNone(enqueue(self.project.id, self.owner.id, "owner", "owner", 1, Layer()))
+            await started.wait()
+            self.assertEqual(enqueue(self.project.id, self.owner.id, "owner", "owner", 2, Layer()),
+                             "Ya tienes una consulta en curso")
+            self.assertIsNone(enqueue(self.project.id, self.editor.id, "editor", "editor", 3, Layer()))
+            for extra in range(4):
+                self.assertIsNone(enqueue(self.project.id, 100 + extra, f"extra{extra}", "editor", 4 + extra, Layer()))
+            self.assertEqual(enqueue(self.project.id, 200, "sin_sitio", "editor", 9, Layer()),
+                             "La IA está ocupada, intenta en un momento")
+            release.set()
+            await asyncio.sleep(0.05)
+        self.assertEqual(order, ["owner", "editor", "extra0", "extra1", "extra2", "extra3"])
+
+    def test_decision_atomica_y_resultado(self):
+        message = ChatMessage.objects.create(project=self.project, is_ai=True, reply_to_user=self.editor,
+                                             kind="proposal", content="Propongo agregar Factura",
+                                             meta={"status": "pending", "updates": [{"action": "add_class", "name": "Factura"}]})
+        _, error = decide(self.project.id, self.owner.id, "owner", message.id, "approve")
+        self.assertIn("Solo quien solicitó", error)
+        approved, error = decide(self.project.id, self.editor.id, "editor", message.id, "approve")
+        self.assertIsNone(error)
+        self.assertEqual(approved["meta"]["status"], "approved")
+        _, error = decide(self.project.id, self.editor.id, "editor", message.id, "reject")
+        self.assertIn("ya fue decidida", error)
+        result, error = record_result(self.project.id, self.editor.id, "editor", message.id, 1, [])
+        self.assertIsNone(error)
+        self.assertEqual(result["meta"]["status"], "applied")
+        _, error = record_result(self.project.id, self.editor.id, "editor", message.id, 1, [])
+        self.assertIsNotNone(error)
+
+    def test_modo_proponente_guarda_propuesta_pendiente(self):
+        ProjectAISettings.objects.create(project=self.project, mode="proposer")
+        current = ChatMessage.objects.create(project=self.project, author=self.editor, content="@ia agrega Factura")
+
+        class Layer:
+            async def group_send(self, group, event):
+                pass
+
+        response = '{"reply":"Ya agregué la clase","updates":[{"action":"add_class","name":"Factura"}]}'
+        with patch("apps.chat.ai_worker.llm.chat", return_value=response):
+            async_to_sync(_answer)(self.project.id, self.editor.id, "editor", "editor", current.id, Layer())
+        answer = ChatMessage.objects.filter(is_ai=True).get()
+        self.assertEqual(answer.kind, "proposal")
+        self.assertEqual(answer.meta["status"], "pending")
+        self.assertEqual(answer.meta["requested_by"], self.editor.id)
+        self.assertIn("Propongo:", answer.content)
+        self.assertNotIn("Ya agregué", answer.content)
+
+    def test_decision_websocket_informa_errores_al_remitente(self):
+        message = ChatMessage.objects.create(project=self.project, is_ai=True, reply_to_user=self.editor,
+                                             kind="proposal", content="Propongo agregar Factura",
+                                             meta={"status": "pending", "updates": [{"action": "add_class", "name": "Factura"}]})
+        async_to_sync(self._decision_scenario)(message.id)
+
+    async def _decision_scenario(self, message_id):
+        async def connect(user):
+            client = WebsocketCommunicator(DiagramConsumer.as_asgi(), f"/ws/diagram/{self.project.id}/")
+            client.scope["user"] = user
+            client.scope["url_route"] = {"kwargs": {"diagram_id": str(self.project.id)}}
+            accepted, _ = await client.connect()
+            self.assertTrue(accepted)
+            return client
+
+        owner = await connect(self.owner)
+        await owner.receive_json_from()
+        editor = await connect(self.editor)
+        await owner.receive_json_from()
+        await editor.receive_json_from()
+        await owner.send_json_to({"type": "proposal_decision", "message_id": message_id, "decision": "approve"})
+        self.assertEqual((await owner.receive_json_from())["type"], "chat_error")
+        await editor.send_json_to({"type": "proposal_decision", "message_id": message_id, "decision": "approve"})
+        for client in (owner, editor):
+            self.assertEqual((await client.receive_json_from())["message"]["meta"]["status"], "approved")
+        await editor.send_json_to({"type": "proposal_decision", "message_id": message_id, "decision": "reject"})
+        self.assertEqual((await editor.receive_json_from())["type"], "chat_error")
+        await editor.disconnect()
+        await owner.disconnect()

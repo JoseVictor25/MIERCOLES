@@ -27,6 +27,9 @@ api.interceptors.request.use((config) => {
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+  if (/^\/?ai\//.test(config.url || '')) {
+    config.timeout = config.timeout || 200000;
+  }
   if (config.data instanceof FormData) {
     delete config.headers['Content-Type'];
   }

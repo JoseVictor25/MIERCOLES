@@ -13,6 +13,8 @@ Autenticación: se espera el JWT en el query-string ?token=<JWT>
 
 import json
 import logging
+from apps.chat.ai_worker import ROOM_DIAGRAMS, enqueue, has_mention
+from apps.chat.decisions import decide, record_result
 
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
@@ -89,10 +91,53 @@ class DiagramConsumer(AsyncWebsocketConsumer):
 
         msg_type = data.get("type")
 
+        if msg_type == "chat_message":
+            if self.project_role not in ("owner", "editor"):
+                await self.send(text_data=json.dumps({"type": "chat_error", "detail": "Solo lectura"}))
+                return
+            content = data.get("content")
+            content = content.strip() if isinstance(content, str) else ""
+            if not 1 <= len(content) <= 2000:
+                await self.send(text_data=json.dumps({"type": "chat_error", "detail": "El mensaje debe tener entre 1 y 2000 caracteres."}))
+                return
+            message = await self._save_chat_message(content)
+            await self.channel_layer.group_send(self.room_group, {
+                "type": "broadcast_chat_message", "message": message,
+            })
+            if has_mention(content) and await self._ai_is_enabled():
+                error = enqueue(self.diagram_id, self.user.id, self.username, self.project_role,
+                                message["id"], self.channel_layer)
+                if error:
+                    await self.send(text_data=json.dumps({"type": "chat_error", "detail": error}))
+            return
+
+        if msg_type == "proposal_decision":
+            message, error = await database_sync_to_async(decide)(
+                self.diagram_id, self.user.id, self.project_role,
+                data.get("message_id"), data.get("decision"))
+            if error:
+                await self.send(text_data=json.dumps({"type": "chat_error", "detail": error}))
+            else:
+                await self.channel_layer.group_send(self.room_group, {
+                    "type": "broadcast_chat_message_update", "message": message})
+            return
+
+        if msg_type == "proposal_result":
+            message, error = await database_sync_to_async(record_result)(
+                self.diagram_id, self.user.id, self.project_role, data.get("message_id"),
+                data.get("applied"), data.get("failed"))
+            if error:
+                await self.send(text_data=json.dumps({"type": "chat_error", "detail": error}))
+            else:
+                await self.channel_layer.group_send(self.room_group, {
+                    "type": "broadcast_chat_message_update", "message": message})
+            return
+
         if self.project_role == "viewer" and msg_type in ("diagram_update", "cursor_move"):
             return
 
         if msg_type == "diagram_update":
+            ROOM_DIAGRAMS[self.room_group] = {"nodes": data.get("nodes", []), "edges": data.get("edges", [])}
             # Re-difundir el estado completo del diagrama a todos excepto el remitente
             await self.channel_layer.group_send(
                 self.room_group,
@@ -162,6 +207,21 @@ class DiagramConsumer(AsyncWebsocketConsumer):
             "user_id": event["user_id"],
         }))
 
+    async def broadcast_chat_message(self, event):
+        """Entrega el mensaje persistido a todos, incluido su autor."""
+        await self.send(text_data=json.dumps({"type": "chat_message", "message": event["message"]}))
+
+    async def broadcast_chat_message_update(self, event):
+        await self.send(text_data=json.dumps({"type": "chat_message_update", "message": event["message"]}))
+
+    async def broadcast_ai_typing(self, event):
+        await self.send(text_data=json.dumps({"type": "ai_typing", "active": event["active"],
+                                              "for_user_id": event["for_user_id"],
+                                              "for_username": event["for_username"]}))
+
+    async def broadcast_ai_settings(self, event):
+        await self.send(text_data=json.dumps({"type": "ai_settings", "settings": event["settings"]}))
+
     async def broadcast_user_leave(self, event):
         """Notifica a todos que alguien salió."""
         await self.send(text_data=json.dumps({
@@ -171,6 +231,18 @@ class DiagramConsumer(AsyncWebsocketConsumer):
         }))
 
     # ─── Helpers de BD (síncronos → asíncronos) ─────────────────────────────────
+
+    @database_sync_to_async
+    def _save_chat_message(self, content):
+        from apps.chat.models import ChatMessage, message_data
+        message = ChatMessage.objects.create(project_id=self.diagram_id, author=self.user, content=content)
+        return message_data(message)
+
+    @database_sync_to_async
+    def _ai_is_enabled(self):
+        from apps.chat.models import ProjectAISettings
+        configuration, _ = ProjectAISettings.objects.get_or_create(project_id=self.diagram_id)
+        return configuration.enabled
 
     @database_sync_to_async
     def _authenticate_from_token(self):

@@ -1,0 +1,27 @@
+.project-chat-tabs {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 205;
+  width: min(400px, 100vw);
+  height: 42px;
+  display: flex;
+  align-items: stretch;
+  padding: 3px 5px 0;
+  background: #1e293b;
+  border-bottom: 1px solid rgba(129, 140, 248, .35);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, .18);
+}
+.project-chat-tabs button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 7px 7px 0 0;
+  background: transparent;
+  color: #94a3b8;
+  font: 600 12px Inter, system-ui, sans-serif;
+  cursor: pointer;
+}
+.project-chat-tabs button:not(.project-chat-tabs-close) { flex: 1; }
+.project-chat-tabs button.active { color: #e0e7ff; background: rgba(99, 102, 241, .12); border-bottom-color: #818cf8; }
+.project-chat-tabs button:hover { color: #fff; }
+.project-chat-tabs .project-chat-tabs-close { width: 36px; display: grid; place-items: center; }

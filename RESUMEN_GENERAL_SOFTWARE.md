@@ -20,11 +20,14 @@ Cada cliente conectado a `/ws/diagram/<id>/` se une al grupo `diagram_<id>`. El 
 
 ## Inteligencia artificial
 
-`apps.ai_core` implementa sugerencias sobre el diagrama, chat de ayuda, extracción de clases desde una imagen y diagnóstico de la conexión con Gemini. Son funciones opcionales y requieren `GEMINI_API_KEY`. Los identificadores de modelos usados están definidos en `config/settings.py`: una lista de cuatro modelos para chat/visión, uno para diagnóstico y otro para JavaDoc. Su disponibilidad depende del proveedor y de la clave configurada. Groq y Ollama no se usan.
+El proyecto tiene un chat de equipo persistente en `apps.chat`. Los mensajes se guardan en `chat_mensaje` y se distribuyen por el WebSocket del diagrama a todos los miembros, incluido el autor. Dueño y editores pueden escribir; los visualizadores solo leen. `GET /api/projects/<id>/chat/` entrega las últimas 50 entradas, admite `before` para cargar anteriores y `after` para recuperar mensajes tras una reconexión. El panel del editor separa el chat de equipo del asistente IA privado.
+La IA del equipo responde a mensajes con `@ia` escritos por el dueño o un editor. El dueño configura su disponibilidad, personalidad y modo en el panel o mediante `GET/PATCH /api/projects/<id>/ai-settings/`. En modo consejero responde sin acciones; en modo proponente puede publicar cambios pendientes que solo el solicitante aprueba o rechaza. El cliente aplica una propuesta aprobada y comunica el resultado al servidor. Las respuestas se guardan con `reply_to_user` para conservar el contexto individual de cada miembro. La cola local procesa una consulta a la vez y admite hasta cinco en espera por proceso. Tanto la cola de IA como `InMemoryChannelLayer` requieren un solo proceso; con varios procesos harían falta Redis para los canales y una cola compartida para la IA. El panel muestra a la IA en presencia, distingue mensajes dirigidos al usuario y presenta propuestas con acciones y resultados.
+
+`apps.ai_core` ofrece sugerencias, ayuda, extracción UML desde imágenes y diagnóstico mediante una API local compatible con OpenAI. `backend/apps/ai_core/llm.py` centraliza el acceso. Inicia el servidor local de LM Studio en el puerto 1235, consulta `GET http://localhost:1235/v1/models` y configura en `backend/.env` los identificadores `LLM_TEXT_MODEL` y `LLM_VISION_MODEL`, junto a `LLM_BASE_URL`, `LLM_API_KEY` y `LLM_TIMEOUT`. Para Ollama cambia la URL a `http://localhost:11434/v1`; vLLM también funciona con su URL compatible. La primera respuesta puede tardar mientras se carga el modelo.
 
 ## Generación de código
 
-`POST /api/projects/<id>/generate/spring-boot/` usa `apps.generator.engine.SpringGenerator` y descarga un ZIP con un proyecto Java/Spring Boot. Por cada clase genera entidad, DTOs de entrada y salida, mapper, repositorio, servicio y controlador, además de `pom.xml`, `application.properties` y un README. La opción `include_ai_docs` intenta añadir JavaDoc y anotaciones Swagger mediante Gemini. No genera proyectos Python, TypeScript ni SQL DDL independiente.
+`POST /api/projects/<id>/generate/spring-boot/` usa `apps.generator.engine.SpringGenerator` y descarga un ZIP con un proyecto Java/Spring Boot. Por cada clase genera entidad, DTOs de entrada y salida, mapper, repositorio, servicio y controlador, además de `pom.xml`, `application.properties` y un README. La opción `include_ai_docs` intenta añadir JavaDoc y anotaciones Swagger mediante la IA local; si falla, el ZIP se genera con un aviso. No genera proyectos Python, TypeScript ni SQL DDL independiente.
 
 El generador interpreta herencia con `extends` y `@Inheritance(JOINED)`; en 1..N coloca la clave foránea en el lado muchos. En N..M sin clase de asociación usa `@ManyToMany`. Si la arista apunta a una clase de asociación mediante `associationClassId`, genera esa clase como entidad con referencias a los dos extremos y sus atributos propios, sin crear una segunda tabla de unión. Las autorrelaciones con `sourceRole` y `targetRole` explícitos reciben nombres de campo únicos; las ambiguas se omiten con un aviso en el log y en el README del ZIP.
 
@@ -38,7 +41,7 @@ backend/
     projects/             proyectos, snapshots, permisos, XMI y JavaDoc IA
       generators/          JavaDoc IA y XMI
     realtime/             consumidor y rutas WebSocket
-    ai_core/              endpoints Gemini
+    ai_core/              endpoints de IA local
     generator/            motor Spring Boot, plantillas Jinja2 y pruebas
     diagrams/             legado no instalado; conservado por sus datos históricos
   manage.py

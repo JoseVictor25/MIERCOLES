@@ -10,7 +10,7 @@ import api from '../api/axios';
  *   diagramData     : { nodes, edges }   — estado actual del diagrama
  *   onApplyAIUpdates: (updates) => void  — función para ejecutar comandos de la IA
  */
-export default function AIChatPanel({ isOpen, onClose, diagramData, onApplyAIUpdates }) {
+export default function AIChatPanel({ isOpen, onClose, diagramData, onApplyAIUpdates, topOffset = 0 }) {
   const [messages, setMessages] = useState([
     {
       role: 'assistant',
@@ -91,17 +91,23 @@ export default function AIChatPanel({ isOpen, onClose, diagramData, onApplyAIUpd
         message: text,
         diagram_data: diagramData || { nodes: [], edges: [] },
       });
-      setMessages(prev => [
-        ...prev,
-        { role: 'assistant', content: res.data.reply, model: res.data.model },
-      ]);
-      
-      // Aplicar comandos sugeridos por la IA en el diagrama
-      if (res.data.updates && res.data.updates.length > 0 && onApplyAIUpdates) {
-        onApplyAIUpdates(res.data.updates);
-      }
+      const result = res.data.updates?.length && onApplyAIUpdates
+        ? onApplyAIUpdates(res.data.updates)
+        : { applied: [], failed: [] };
+      const failures = [...(res.data.rejected || []), ...(result.failed || [])];
+      const summary = result.applied?.length ? `${result.applied.length} cambios aplicados.` : '';
+      const problems = failures.length ? `No se pudo: ${failures.map(item => item.reason).join('; ')}` : '';
+      const noChange = res.data.updates?.length && !result.applied?.length && !failures.length
+        ? 'No se aplicaron cambios.' : '';
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: [res.data.reply, summary, problems, noChange].filter(Boolean).join('\n'),
+        model: res.data.model,
+      }]);
     } catch (err) {
-      const errMsg = err.response?.data?.detail 
+      const errMsg = ([503, 404].includes(err.response?.status)
+        ? 'Inicia el servidor local de LM Studio y verifica los modelos' : null)
+        || err.response?.data?.detail
         || (err.code === 'ECONNABORTED' ? 'Tiempo de espera agotado al conectar con la IA.' : null)
         || (err.response?.status === 504 ? 'Tiempo de espera agotado en el servidor (504).' : null)
         || (err.response?.status === 502 ? 'Servidor backend no disponible (502).' : null)
@@ -146,7 +152,7 @@ export default function AIChatPanel({ isOpen, onClose, diagramData, onApplyAIUpd
 
       {/* Panel */}
       <div style={{
-        position: 'fixed', right: 0, top: 0, bottom: 0,
+        position: 'fixed', right: 0, top: topOffset, bottom: 0,
         width: '400px', zIndex: 201,
         background: 'linear-gradient(180deg, #0f172a 0%, #1e293b 100%)',
         border: '1px solid rgba(99, 102, 241, 0.3)',
@@ -176,7 +182,7 @@ export default function AIChatPanel({ isOpen, onClose, diagramData, onApplyAIUpd
                 Asistente UML IA
               </div>
               <div style={{ fontSize: '11px', color: '#94a3b8' }}>
-                Powered by Gemini
+                IA local
               </div>
             </div>
           </div>

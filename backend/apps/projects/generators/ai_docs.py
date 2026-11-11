@@ -1,71 +1,29 @@
-import google.generativeai as genai
-from django.conf import settings
+"""Documentación Java asistida por el modelo local."""
 
-def _get_gemini_key():
-    key = settings.GEMINI_API_KEY
-    return key.strip() if key else ""
+import logging
+
+from apps.ai_core import llm
+
+logger = logging.getLogger(__name__)
+
 
 def generate_ai_docs_for_class(class_name: str, attributes: list, methods: list, project_name: str) -> dict:
-    """
-    Llama a Gemini para generar JavaDoc y anotaciones de Swagger
-    para una clase específica del diagrama.
-    Retorna un diccionario con:
-    {
-       "class_javadoc": "/** ... */",
-       "class_swagger": "@Tag(name=...)",
-       "attributes_docs": { "attr_name": "/** ... */ @Schema(...)" },
-       "methods_docs": { "method_name": "/** ... */ @Operation(...)" }
-    }
-    """
-    key = _get_gemini_key()
-    if not key:
-        return {}
-
-    genai.configure(api_key=key)
-    
-    # Usar un modelo rápido
-    model = genai.GenerativeModel(settings.GEMINI_DOCS_MODEL)
-
-    attrs_str = ", ".join([f"{a['type']} {a['name']}" for a in attributes])
-    methods_str = ", ".join([f"{m['return_type']} {m['name']}()" for m in methods])
-
-    prompt = f"""
-Eres un Arquitecto de Software Experto en Java y Spring Boot.
-Genera la documentación JavaDoc y Swagger (OpenAPI 3) para la siguiente clase de un proyecto llamado '{project_name}'.
-
-Clase: {class_name}
-Atributos: {attrs_str}
-Métodos: {methods_str}
-
-Responde ÚNICAMENTE con un objeto JSON estrictamente válido, sin markdown ni bloques de código, con este formato exacto:
-{{
-  "class_javadoc": "/**\\n * Descripción profesional de la clase.\\n */",
-  "class_swagger": "@Tag(name = \"{class_name}\", description = \"API para la gestión de {class_name}\")",
-  "attributes_docs": {{
-    "nombreAtributo1": "/** Descripción. */\\n    @Schema(description = \"...\", example = \"...\")"
-  }},
-  "methods_docs": {{
-    "nombreMetodo1": "/** Descripción. */\\n    @Operation(summary = \"...\", description = \"...\")"
-  }}
-}}
-No incluyas explicaciones, solo el JSON parseable.
-"""
-
+    """Devuelve JavaDoc y Swagger, o un diccionario vacío si la IA falla."""
+    attrs = ", ".join(f"{a.get('type', 'String')} {a.get('name', '')}" for a in attributes)
+    meths = ", ".join(f"{m.get('return_type', 'void')} {m.get('name', '')}()" for m in methods)
+    prompt = (f"Genera JavaDoc y anotaciones Swagger para {class_name} del proyecto {project_name}. "
+              f"Atributos: {attrs}. Métodos: {meths}. "
+              "Responde SOLO con JSON válido, sin texto adicional ni cercas de código. "
+              'Ejemplo: {"class_javadoc":"/** Clase de ejemplo. */",'
+              '"class_swagger":"@Tag(name = Ejemplo)",'
+              '"attributes_docs":{},"methods_docs":{}}')
     try:
-        response = model.generate_content(prompt, generation_config={"temperature": 0.2})
-        text = response.text.strip()
-        
-        # Limpiar bloques markdown si la IA los devuelve
-        if text.startswith("```json"):
-            text = text[7:]
-        if text.startswith("```"):
-            text = text[3:]
-        if text.endswith("```"):
-            text = text[:-3]
-            
-        import json
-        data = json.loads(text.strip())
+        raw = llm.chat([{"role": "user", "content": prompt}])
+        from apps.ai_core.views import _parse_json_safe
+        data = _parse_json_safe(raw)
+        if not isinstance(data, dict):
+            raise llm.LLMBadOutput("La IA devolvió JavaDoc con formato inválido.")
         return data
-    except Exception as e:
-        print(f"[AI_DOCS_ERROR] {e}")
+    except (llm.LLMUnavailable, llm.LLMBadOutput) as exc:
+        logger.warning("JavaDoc omitido para %s: %s", class_name, exc)
         return {}

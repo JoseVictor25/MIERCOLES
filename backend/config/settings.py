@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     # Nuestras apps
     "apps.accounts",
     "apps.projects",
+    "apps.chat",
     "apps.ai_core",
     "apps.realtime",
     "apps.generator",
@@ -152,13 +153,10 @@ MEDIA_ROOT = BASE_DIR / "media"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# Configuración de Gemini.
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODELS = [
-    "gemini-3.6-flash",
-    "gemini-3-flash-preview",
-    "gemini-flash-latest",
-    "gemini-flash-lite-latest",
-]
-GEMINI_DIAGNOSE_MODEL = "gemini-3.5-flash"
-GEMINI_DOCS_MODEL = "gemini-3.5-flash-lite"
+# Servidor local compatible con la API de OpenAI.
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:1235/v1")
+LLM_TEXT_MODEL = os.getenv("LLM_TEXT_MODEL", "qwen2.5-3b-instruct")
+LLM_VISION_MODEL = os.getenv("LLM_VISION_MODEL", "qwen2.5-vl-3b-instruct")
+LLM_API_KEY = os.getenv("LLM_API_KEY", "lm-studio")
+LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "180"))
+LLM_VISION_TIMEOUT = int(os.getenv("LLM_VISION_TIMEOUT", "300"))

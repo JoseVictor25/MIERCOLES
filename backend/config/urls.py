@@ -10,6 +10,7 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/auth/", include("apps.accounts.urls")),
     path("api/", include("apps.projects.urls")),
+    path("api/", include("apps.chat.urls")),
     path("api/", include("apps.generator.urls")),
     path("api/", include("apps.ai_core.urls")),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

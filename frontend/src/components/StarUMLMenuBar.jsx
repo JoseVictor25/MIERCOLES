@@ -23,6 +23,7 @@ export default function StarUMLMenuBar({
   onExportPNG,
   onOpenHistory,
   onOpenAssistant,
+  chatUnread = 0,
   onOpenImageToUML,
   onOpenGenerate,
   onOpenCollab,
@@ -223,7 +224,8 @@ export default function StarUMLMenuBar({
           title="Abrir asistente de modelado UML"
         >
           <MessageSquare size={13} color="#9cdcfe" />
-          <span>Asistente UML</span>
+          <span>Chat</span>
+          {chatUnread > 0 && <span style={{ background: '#dc2626', color: '#fff', borderRadius: 10, padding: '1px 5px' }}>{chatUnread}</span>}
         </button>
 
         <button

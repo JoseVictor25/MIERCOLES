@@ -334,7 +334,13 @@ class SpringGenerator:
                 raw = raw_by_id.get(entity["id"], {})
                 attrs = [{"name": a.get("name"), "type": a.get("data_type")} for a in raw.get("attributes", [])]
                 methods = [{"name": m.get("name"), "return_type": m.get("return_type")} for m in raw.get("methods", [])]
-                entity["ai_docs"] = generate_ai_docs_for_class(entity["name"], attrs, methods, self.project_name)
+                try:
+                    entity["ai_docs"] = generate_ai_docs_for_class(entity["name"], attrs, methods, self.project_name)
+                except Exception as exc:
+                    entity["ai_docs"] = {}
+                    self.warnings.append(f"JavaDoc asistido omitido para {entity['name']}: {exc}")
+                if not entity["ai_docs"] and not any("JavaDoc asistido omitido" in warning and entity["name"] in warning for warning in self.warnings):
+                    self.warnings.append(f"JavaDoc asistido omitido para {entity['name']}: la IA local no respondió o devolvió datos inválidos.")
 
         # Si el modelo no tiene clases, crear una clase de ejemplo
         if not entities:

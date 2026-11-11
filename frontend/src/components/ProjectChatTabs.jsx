@@ -6,7 +6,7 @@ import { X } from 'lucide-react';
 import './ProjectChatTabs.css';
 
 export default function ProjectChatTabs({ isOpen, onClose, projectId, userId, canWrite, isOwner, participants,
-  wsStatus, sendChatMessage, sendProposalDecision, sendProposalResult, onApplyProposal,
+  wsStatus, sendChatMessage, sendProposalDecision, sendProposalResult, onApplyProposal, onApplyImage,
   diagramData, onApplyAIUpdates }) {
   const [tab, setTab] = useState('team');
   const unread = useChatStore(state => state.unreadByProject[String(projectId)] || 0);
@@ -14,7 +14,7 @@ export default function ProjectChatTabs({ isOpen, onClose, projectId, userId, ca
     <ProjectChatPanel isOpen={isOpen && tab === 'team'} onClose={onClose} projectId={projectId}
       userId={userId} canWrite={canWrite} isOwner={isOwner} participants={participants} wsStatus={wsStatus}
       sendChatMessage={sendChatMessage} sendProposalDecision={sendProposalDecision}
-      sendProposalResult={sendProposalResult} onApplyProposal={onApplyProposal} />
+      sendProposalResult={sendProposalResult} onApplyProposal={onApplyProposal} onApplyImage={onApplyImage} />
     <AIChatPanel isOpen={isOpen && tab === 'ai'} onClose={onClose} diagramData={diagramData}
       onApplyAIUpdates={onApplyAIUpdates} topOffset={42} />
     {isOpen && <nav className="project-chat-tabs" aria-label="Pestañas del chat">

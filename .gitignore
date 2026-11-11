@@ -7,6 +7,7 @@ __pycache__/
 *$py.class
 *.sqlite3
 backend/db.sqlite3
+backend/private_chat_images/
 
 # Node & Build artifacts
 node_modules/

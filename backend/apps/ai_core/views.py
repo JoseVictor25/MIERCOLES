@@ -259,31 +259,23 @@ def _build_reactflow_data(parsed: dict):
     return nodes, edges
 
 
-@api_view(["POST"])
-@permission_classes([permissions.IsAuthenticated])
-def ai_vision(request):
-    """Extrae clases y relaciones UML en dos consultas estrechas."""
-    image_file = request.FILES.get("image")
-    if not image_file:
-        return Response({"detail": "Se requiere una imagen."}, status=400)
-    if image_file.size > 8 * 1024 * 1024:
-        return Response({"detail": "La imagen supera el limite de 8 MB."}, status=400)
+def analyze_uml_image(image_file):
+    """Convierte una imagen en nodos y aristas; se usa desde el chat y el modal."""
     try:
         image_bytes = _preparar_imagen(image_file)
-    except (UnidentifiedImageError, OSError, ValueError):
-        return Response({"detail": "El archivo no es una imagen valida."}, status=400)
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise ValueError("El archivo no es una imagen válida.") from exc
 
     try:
         classes_data = _parse_vision_json(llm.vision(CLASSES_PROMPT, image_bytes))
         classes = classes_data if isinstance(classes_data, list) else classes_data.get("classes") if isinstance(classes_data, dict) else None
         if not isinstance(classes, list):
-            raise llm.LLMBadOutput("El modelo no devolvio las clases en JSON valido.")
+            raise llm.LLMBadOutput("El modelo no devolvió las clases en JSON válido.")
         classes = [c for c in classes if isinstance(c, dict) and isinstance(c.get("name"), str) and c["name"].strip()]
         if not classes:
             raise llm.LLMBadOutput("No se encontraron clases UML en la imagen.")
     except (llm.LLMUnavailable, llm.LLMBadOutput) as exc:
-        return Response({"nodes": [], "edges": [], "description": "", "model": "none",
-                         "error": _vision_error(exc)}, status=200)
+        return {"nodes": [], "edges": [], "description": "", "model": "none", "error": _vision_error(exc)}
 
     names = [c["name"] for c in classes]
     description = f"Se detectaron {len(classes)} clases."
@@ -292,7 +284,7 @@ def ai_vision(request):
         data = _parse_vision_json(llm.vision(RELATIONS_PROMPT.replace("{names}", ", ".join(names)), image_bytes))
         found_relations = data if isinstance(data, list) else data.get("relations") if isinstance(data, dict) else None
         if not isinstance(found_relations, list):
-            raise llm.LLMBadOutput("El modelo no devolvio relaciones en JSON valido.")
+            raise llm.LLMBadOutput("El modelo no devolvió relaciones en JSON válido.")
         known = set(names)
         seen = set()
         for rel in found_relations:
@@ -307,9 +299,24 @@ def ai_vision(request):
         description += " No se pudieron extraer relaciones: " + _vision_error(exc)
 
     nodes, edges = _build_reactflow_data({"classes": classes, "relations": relations})
-    return Response({"nodes": nodes, "edges": edges, "description": description,
-                     "model": settings.LLM_VISION_MODEL,
-                     "classes_found": len(nodes), "relations_found": len(edges)})
+    return {"nodes": nodes, "edges": edges, "description": description,
+            "model": settings.LLM_VISION_MODEL,
+            "classes_found": len(nodes), "relations_found": len(edges)}
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def ai_vision(request):
+    """Extrae clases y relaciones UML en dos consultas estrechas."""
+    image_file = request.FILES.get("image")
+    if not image_file:
+        return Response({"detail": "Se requiere una imagen."}, status=400)
+    if image_file.size > 8 * 1024 * 1024:
+        return Response({"detail": "La imagen supera el límite de 8 MB."}, status=400)
+    try:
+        return Response(analyze_uml_image(image_file))
+    except ValueError as exc:
+        return Response({"detail": str(exc)}, status=400)
 
 
 @api_view(["GET"])

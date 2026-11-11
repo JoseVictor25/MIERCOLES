@@ -32,6 +32,7 @@ import HistoryModal from '../components/HistoryModal';
 import ProjectChatTabs from '../components/ProjectChatTabs';
 import { useChatStore } from '../store/chatStore';
 import { applyAIUpdates } from '../utils/applyAIUpdates';
+import { prepareVisionDiagram } from '../utils/prepareVisionDiagram';
 import ImageToUMLModal from '../components/ImageToUMLModal';
 import StarUMLMenuBar from '../components/StarUMLMenuBar';
 import XMIImportModal from '../components/XMIImportModal';
@@ -1265,16 +1266,19 @@ function DiagramPageInner() {
   }, [xmiPreview, nodes, edges, takeSnapshot, setNodes, setEdges, saveDiagram, sendDiagramUpdate, fitView]);
 
   // Aplicar diagrama generado desde imagen al canvas
-  const handleApplyVisionDiagram = useCallback((visionNodes, visionEdges) => {
+  const handleApplyVisionDiagram = useCallback(async (visionNodes, visionEdges, mode = 'add') => {
+    if (!visionNodes?.length) return false;
+    const result = prepareVisionDiagram(nodesRef.current, edgesRef.current, visionNodes, visionEdges, mode);
+    if (!await saveDiagram(result.nodes, result.edges)) return false;
     takeSnapshot();
-    setNodes(prev => {
-      const updated = [...prev, ...visionNodes];
-      saveDiagram(updated, [...edges, ...visionEdges]);
-      if (!isApplyingRemote.current) sendDiagramUpdate(updated, [...edges, ...visionEdges]);
-      return updated;
-    });
-    setEdges(prev => [...prev, ...visionEdges]);
-  }, [setNodes, setEdges, saveDiagram, edges, sendDiagramUpdate, takeSnapshot]);
+    nodesRef.current = result.nodes;
+    edgesRef.current = result.edges;
+    setNodes(result.nodes);
+    setEdges(result.edges);
+    if (!isApplyingRemote.current) sendDiagramUpdate(result.nodes, result.edges);
+    setTimeout(() => fitView?.({ padding: 0.2, duration: 400 }), 150);
+    return true;
+  }, [saveDiagram, takeSnapshot, setNodes, setEdges, sendDiagramUpdate, fitView]);
 
   // ── Aplicar actualizaciones de la IA desde el Chat ─────────────────────────
   const handleApplyAIUpdates = useCallback((updates) => {
@@ -2047,6 +2051,7 @@ function DiagramPageInner() {
         sendProposalDecision={sendProposalDecision}
         sendProposalResult={sendProposalResult}
         onApplyProposal={handleApplyProposal}
+        onApplyImage={handleApplyVisionDiagram}
         diagramData={{ nodes, edges }}
         onApplyAIUpdates={handleApplyAIUpdates}
       />

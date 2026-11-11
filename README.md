@@ -76,3 +76,8 @@ El menú Archivo exporta XMI UML 2.5.1 por defecto (namespaces OMG XMI 20131001 
 En Enterprise Architect, crea o abre un proyecto y usa **Publish > Model Exchange > Import > XMI File** para elegir el archivo `_uml251.xmi`. El paquete contiene clases, relaciones y un diagrama; la extensión de UMLCraft conserva coordenadas exactas para volver a importar aquí. EA puede ignorar esa extensión y usar su propia disposición. Se aceptan XMI UML 2.5.1, 2.4.1 y 2.1 de herramientas como EA, StarUML y Papyrus cuando usan referencias UML estándar. Los perfiles y elementos propietarios no reconocidos se omiten con advertencias. La vista previa limita cada archivo a 5 MB y rechaza DTD y entidades XML.
 
 La documentación de EA enumera oficialmente XMI 2.1 para UML 2.x; si tu versión no acepta el archivo 2.5.1, usa **Exportar XMI 2.1 (compatibilidad)**. Al importar, activa **Import Diagrams** para incluir el diagrama. La compatibilidad del archivo 2.5.1 con una instalación concreta de EA requiere verificación en esa versión.
+
+
+## Imágenes en el chat del proyecto
+
+El dueño y los editores pueden adjuntar una imagen PNG, JPG, WEBP o GIF de hasta 8 MB en la pestaña **Equipo**; los visualizadores pueden verla. La imagen permanece en el historial y se sirve desde almacenamiento privado solo a miembros autenticados del proyecto. En su tarjeta, **Convertir a UML** usa el modelo local de visión y muestra las clases y relaciones detectadas antes de **Agregar** o **Reemplazar** el lienzo. Confirmar guarda el diagrama y lo comparte con los colaboradores conectados. La extracción automática puede omitir o interpretar mal elementos: revisa la vista previa antes de aplicarla.

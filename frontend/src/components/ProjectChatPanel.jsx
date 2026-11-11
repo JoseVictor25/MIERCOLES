@@ -2,7 +2,9 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { getColorForUser } from '../hooks/useCollaboration';
 import { useChatStore } from '../store/chatStore';
 import toast from 'react-hot-toast';
-import { Bot, Check, ChevronUp, Clock3, Send, Settings2, X } from 'lucide-react';
+import { Bot, Check, ChevronUp, Clock3, ImagePlus, Loader2, Send, Settings2, X } from 'lucide-react';
+import ChatImageCard from './ChatImageCard';
+import api from '../api/axios';
 import './ProjectChatPanel.css';
 
 const EMPTY_MESSAGES = [];
@@ -17,7 +19,7 @@ const ACTION_NAMES = {
   update_relation_type: 'Cambiar tipo de relación', set_multiplicity: 'Fijar multiplicidades',
 };
 
-export function describeAIUpdate(update) {
+function describeAIUpdate(update) {
   const label = ACTION_NAMES[update.action] || 'Cambio';
   if (update.action === 'rename_class') return `${label}: ${update.name} → ${update.new_name}`;
   if (update.class_name) return `${label}: ${update.class_name}.${update.attr_name}`;
@@ -46,11 +48,16 @@ function proposalStatusText(message, participants) {
 }
 
 export default function ProjectChatPanel({ isOpen, onClose, projectId, userId, canWrite, isOwner,
-  participants = {}, wsStatus, sendChatMessage, sendProposalDecision, sendProposalResult, onApplyProposal }) {
+  participants = {}, wsStatus, sendChatMessage, sendProposalDecision, sendProposalResult, onApplyProposal, onApplyImage }) {
   const [draft, setDraft] = useState('');
+  const [imageFile, setImageFile] = useState(null);
+  const [imagePreview, setImagePreview] = useState(null);
+  const [uploading, setUploading] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const listRef = useRef(null);
   const textareaRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const imagePreviewRef = useRef(null);
   const wasAtBottom = useRef(true);
   const previousHeight = useRef(null);
   const approvals = useRef(new Set());
@@ -66,6 +73,16 @@ export default function ProjectChatPanel({ isOpen, onClose, projectId, userId, c
   const typing = useChatStore(state => state.typingByProject[String(projectId)]);
   const loadAISettings = useChatStore(state => state.loadAISettings);
   const patchAISettings = useChatStore(state => state.patchAISettings);
+
+  useEffect(() => () => {
+    if (imagePreviewRef.current) URL.revokeObjectURL(imagePreviewRef.current);
+  }, []);
+  const clearImage = () => {
+    if (imagePreviewRef.current) URL.revokeObjectURL(imagePreviewRef.current);
+    imagePreviewRef.current = null;
+    setImagePreview(null);
+    setImageFile(null);
+  };
 
   useEffect(() => {
     if (projectId) loadAISettings(projectId).catch(() => toast.error('No se pudo cargar la configuración de IA.'));
@@ -123,13 +140,46 @@ export default function ProjectChatPanel({ isOpen, onClose, projectId, userId, c
     }
   }, [messages, isOpen]);
 
-  const send = () => {
-    if (!canWrite || !draft.trim()) return;
+  const send = async () => {
+    if (!canWrite || uploading || (!draft.trim() && !imageFile)) return;
+    if (imageFile) {
+      setUploading(true);
+      try {
+        const form = new FormData();
+        form.append('image', imageFile);
+        form.append('content', draft.trim());
+        const { data } = await api.post(`projects/${projectId}/chat/images/`, form);
+        useChatStore.getState().appendMessage(projectId, data);
+        clearImage();
+        setDraft('');
+        wasAtBottom.current = true;
+        if (textareaRef.current) textareaRef.current.style.height = 'auto';
+      } catch (error) {
+        toast.error(error.response?.data?.detail || 'No se pudo subir la imagen.');
+      } finally {
+        setUploading(false);
+      }
+      return;
+    }
     if (sendChatMessage(draft)) {
       wasAtBottom.current = true;
       setDraft('');
       if (textareaRef.current) textareaRef.current.style.height = 'auto';
     }
+  };
+  const selectImage = (file) => {
+    if (!file) return;
+    if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type)) {
+      toast.error('Usa PNG, JPG, WEBP o GIF.'); return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      toast.error('La imagen no debe superar 8 MB.'); return;
+    }
+    if (imagePreviewRef.current) URL.revokeObjectURL(imagePreviewRef.current);
+    const url = URL.createObjectURL(file);
+    imagePreviewRef.current = url;
+    setImagePreview(url);
+    setImageFile(file);
   };
   const handleDraft = (value) => {
     setDraft(value);
@@ -236,7 +286,9 @@ export default function ProjectChatPanel({ isOpen, onClose, projectId, userId, c
                 {message.is_ai && message.reply_to_user_id && <div className={`project-chat-recipient ${forMe ? 'mine' : ''}`}>
                   para @{message.reply_to_username || participants[message.reply_to_user_id] || 'Alguien'}
                 </div>}
-                <div className="project-chat-content">{message.content}</div>
+                {message.content && <div className="project-chat-content">{message.content}</div>}
+                {message.kind === 'image' && <ChatImageCard message={message} projectId={projectId}
+                  canWrite={canWrite} onApplyImage={onApplyImage} />}
               {message.kind === 'proposal' && <div className="project-chat-proposal">
                 <div className="project-chat-proposal-heading"><Check size={14} /><strong>Propuesta</strong>
                   <span>{PROPOSAL_STATUS[message.meta?.status] || 'Pendiente'}</span></div>
@@ -265,13 +317,27 @@ export default function ProjectChatPanel({ isOpen, onClose, projectId, userId, c
           {aiSettings?.enabled && /(^|\s)@$/.test(draft) && <button className="project-chat-mention" onClick={mention}>
             <Bot size={15} /> @ia <span>Consultar al asistente</span>
           </button>}
+          {imagePreview && <div className="project-chat-attachment-preview">
+            <img src={imagePreview} alt="Imagen seleccionada" />
+            <span>{imageFile?.name}</span>
+            <button onClick={clearImage} aria-label="Quitar imagen"><X size={15} /></button>
+          </div>}
+          {uploading && <div className="project-chat-upload-status" role="status">Subiendo imagen…</div>}
           <div className="project-chat-composer">
+            <button className="project-chat-attach" onClick={() => fileInputRef.current?.click()}
+              disabled={wsStatus !== 'connected' || uploading} title="Adjuntar imagen" aria-label="Adjuntar imagen">
+              <ImagePlus size={17} />
+            </button>
+            <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden
+              onChange={event => { selectImage(event.target.files?.[0]); event.target.value = ''; }} />
             <textarea ref={textareaRef} rows={1} value={draft} maxLength={2000}
-              onChange={event => handleDraft(event.target.value)} disabled={wsStatus !== 'connected'}
+              onChange={event => handleDraft(event.target.value)} disabled={wsStatus !== 'connected' || uploading}
               placeholder={wsStatus === 'connected' ? 'Escribe un mensaje…' : 'Esperando conexión…'}
               onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send(); } }} />
             <button className="project-chat-send" onClick={send} aria-label="Enviar mensaje"
-              disabled={wsStatus !== 'connected' || !draft.trim()}><Send size={17} /></button>
+              disabled={wsStatus !== 'connected' || uploading || (!draft.trim() && !imageFile)}>
+              {uploading ? <Loader2 size={17} className="project-chat-spin" /> : <Send size={17} />}
+            </button>
           </div>
           <div className="project-chat-hint"><span>Enter envía · Shift+Enter salto de línea · @ia para consultar a la IA</span>
             {draft.length >= 1700 && <span className="project-chat-counter">{draft.length}/2000</span>}

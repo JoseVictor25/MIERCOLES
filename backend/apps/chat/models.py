@@ -1,5 +1,8 @@
 from django.db import models
 from django.conf import settings
+from django.db.models.signals import post_delete
+from django.dispatch import receiver
+from django.db import transaction
 from apps.projects.models import Project
 
 
@@ -22,6 +25,15 @@ class ChatMessage(models.Model):
 
 def message_data(message):
     """Formato compartido por REST y WebSocket."""
+    meta = dict(message.meta or {})
+    if message.kind == "image":
+        meta.pop("image_path", None)
+        meta.pop("thumbnail_path", None)
+        meta.pop("analysis", None)
+        base = f"projects/{message.project_id}/chat/{message.id}/image/"
+        meta["image_url"] = base
+        meta["thumbnail_url"] = f"{base}?size=thumb"
+        meta["analyzed"] = bool(message.meta.get("analysis"))
     return {
         "id": message.id,
         "author_id": message.author_id,
@@ -31,7 +43,7 @@ def message_data(message):
         "reply_to_username": message.reply_to_user.username if message.reply_to_user else None,
         "content": message.content,
         "kind": message.kind,
-        "meta": message.meta,
+        "meta": meta,
         "created_at": message.created_at.isoformat(),
     }
 
@@ -57,3 +69,12 @@ class ProjectAISettings(models.Model):
 
 def settings_data(configuration):
     return {"enabled": configuration.enabled, "mode": configuration.mode, "persona": configuration.persona}
+
+
+@receiver(post_delete, sender=ChatMessage)
+def delete_chat_image(sender, instance, **kwargs):
+    """Limpia las imágenes privadas al borrar un mensaje o su proyecto."""
+    if instance.kind == "image":
+        from .images import delete_image
+        meta = dict(instance.meta or {})
+        transaction.on_commit(lambda: delete_image(meta))

@@ -125,3 +125,34 @@
 .project-chat-readonly { display: flex; gap: 8px; align-items: center; padding: 12px; border: 1px solid rgba(148, 163, 184, .18); border-radius: 12px; background: rgba(148, 163, 184, .07); color: #94a3b8; font-size: 12px; }
 .project-chat-mention { display: flex; align-items: center; gap: 8px; width: 100%; margin-bottom: 7px; padding: 9px 11px; border: 1px solid rgba(129, 140, 248, .35); border-radius: 9px; background: #242954; color: #e0e7ff; font-size: 12px; text-align: left; }
 .project-chat-mention span { margin-left: auto; color: #a5b4fc; font-size: 11px; }
+.project-chat-attach { flex: 0 0 28px; width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: #a5b4fc; }
+.project-chat-attach:hover { background: rgba(129, 140, 248, .16); color: #e0e7ff; }
+.project-chat-attachment-preview { display: flex; align-items: center; gap: 9px; margin-bottom: 8px; padding: 7px; border: 1px solid rgba(129, 140, 248, .3); border-radius: 10px; background: rgba(99, 102, 241, .1); color: #e0e7ff; font-size: 11px; }
+.project-chat-attachment-preview img { width: 46px; height: 46px; object-fit: cover; border-radius: 7px; }
+.project-chat-attachment-preview span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-chat-attachment-preview button { border: 0; background: transparent; color: #c7d2fe; }
+.project-chat-upload-status { margin-bottom: 6px; color: #c7d2fe; font-size: 11px; }
+.project-chat-image-card { display: grid; gap: 7px; margin-top: 7px; }
+.project-chat-image-open { display: block; width: 100%; padding: 0; overflow: hidden; border: 1px solid rgba(148, 163, 184, .2); border-radius: 9px; background: #0f172a; }
+.project-chat-image-open img { display: block; width: 100%; max-height: 250px; object-fit: contain; }
+.project-chat-image-placeholder { display: flex; align-items: center; justify-content: center; gap: 7px; min-height: 95px; border: 1px dashed #475569; border-radius: 9px; color: #94a3b8; font-size: 11px; }
+.project-chat-image-info { display: flex; align-items: center; gap: 5px; color: #94a3b8; font-size: 10px; }
+.project-chat-image-analyze { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; padding: 8px; border: 1px solid #818cf8; border-radius: 8px; background: rgba(99, 102, 241, .19); color: #e0e7ff; font-size: 11px; font-weight: 700; }
+.project-chat-image-analyze:hover { background: rgba(99, 102, 241, .3); }
+.project-chat-image-result { display: grid; gap: 8px; padding: 10px; border: 1px solid rgba(165, 180, 252, .3); border-radius: 9px; background: rgba(15, 23, 42, .6); font-size: 11px; }
+.project-chat-image-result strong { color: #c7d2fe; }
+.project-chat-image-result p { margin: 0; color: #cbd5e1; line-height: 1.4; }
+.project-chat-image-class-list { display: flex; flex-wrap: wrap; gap: 5px; }
+.project-chat-image-class-list span { padding: 2px 6px; border-radius: 6px; background: rgba(16, 185, 129, .12); color: #a7f3d0; }
+.project-chat-image-options { display: flex; flex-wrap: wrap; gap: 10px; }
+.project-chat-image-options label { display: flex; align-items: center; gap: 3px; color: #e2e8f0; }
+.project-chat-image-options input { accent-color: #818cf8; }
+.project-chat-image-actions { display: flex; justify-content: flex-end; gap: 7px; }
+.project-chat-image-actions button { padding: 6px 9px; border: 1px solid #475569; border-radius: 7px; background: #1e293b; color: #e2e8f0; font-size: 11px; }
+.project-chat-image-actions button:last-child { border-color: #818cf8; background: #4f46e5; color: white; }
+.project-chat-image-actions button:disabled { opacity: .5; }
+.project-chat-image-overlay { position: fixed; inset: 0; z-index: 500; display: grid; place-items: center; padding: 32px; background: rgba(0, 0, 0, .86); }
+.project-chat-image-overlay img { max-width: 95vw; max-height: 88vh; object-fit: contain; }
+.project-chat-image-overlay button { position: absolute; top: 14px; right: 18px; display: grid; place-items: center; width: 34px; height: 34px; border: 0; border-radius: 50%; background: #334155; color: white; }
+.project-chat-spin { animation: project-chat-spin .8s linear infinite; }
+@keyframes project-chat-spin { to { transform: rotate(360deg); } }

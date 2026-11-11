@@ -2,10 +2,14 @@
 
 from asgiref.sync import async_to_sync
 import asyncio
+import io
+import tempfile
 from unittest.mock import patch
 from channels.testing import WebsocketCommunicator
 from django.contrib.auth import get_user_model
-from django.test import TransactionTestCase
+from django.test import TransactionTestCase, override_settings
+from django.core.files.uploadedfile import SimpleUploadedFile
+from PIL import Image
 from rest_framework.test import APIClient
 
 from apps.projects.models import Project, ProjectCollaborator
@@ -45,6 +49,111 @@ class ChatTests(TransactionTestCase):
         self.assertIn(self.client.get(f"/api/projects/{self.project.id}/chat/").status_code, (403, 404))
         self.client.force_authenticate(user=self.owner)
         self.assertEqual(self.client.get("/api/projects/999999/chat/").status_code, 404)
+
+    def _image_file(self):
+        output = io.BytesIO()
+        Image.new("RGB", (96, 72), "white").save(output, format="PNG")
+        return SimpleUploadedFile("diagrama.png", output.getvalue(), content_type="image/png")
+
+    def _private_images(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        setting = override_settings(CHAT_IMAGE_ROOT=folder.name)
+        setting.enable()
+        self.addCleanup(setting.disable)
+        return folder.name
+
+    def test_imagen_privada_historial_y_permisos(self):
+        from pathlib import Path
+        folder = self._private_images()
+        url = f"/api/projects/{self.project.id}/chat/images/"
+        self.client.force_authenticate(user=self.owner)
+        response = self.client.post(url, {"image": self._image_file(), "content": "  Diagrama inicial  "}, format="multipart")
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["kind"], "image")
+        self.assertEqual(response.data["content"], "Diagrama inicial")
+        self.assertNotIn("image_path", response.data["meta"])
+        self.assertTrue(response.data["meta"]["thumbnail_url"])
+        message = ChatMessage.objects.get(pk=response.data["id"])
+        original_path = Path(folder) / message.meta["image_path"]
+        self.assertTrue(original_path.is_file())
+
+        self.client.force_authenticate(user=self.viewer)
+        history = self.client.get(f"/api/projects/{self.project.id}/chat/")
+        self.assertEqual(history.data["messages"][-1]["kind"], "image")
+        image = self.client.get("/api/" + response.data["meta"]["image_url"])
+        self.assertEqual(image.status_code, 200)
+        self.assertEqual(b"".join(image.streaming_content), original_path.read_bytes())
+        image.close()
+        thumbnail = self.client.get("/api/" + response.data["meta"]["thumbnail_url"])
+        self.assertEqual(thumbnail.status_code, 200)
+        self.assertEqual(thumbnail["Content-Type"], "image/jpeg")
+        thumbnail.close()
+        self.assertEqual(self.client.post(url, {"image": self._image_file()}, format="multipart").status_code, 403)
+        self.assertEqual(self.client.post(f"/api/projects/{self.project.id}/chat/{message.id}/analyze/").status_code, 403)
+
+        self.client.force_authenticate(user=self.other)
+        self.assertEqual(self.client.get("/api/" + response.data["meta"]["image_url"]).status_code, 403)
+        self.client.force_authenticate(user=self.owner)
+        self.assertEqual(self.client.post(url, {"image": SimpleUploadedFile("falso.png", b"no es imagen")}, format="multipart").status_code, 400)
+        self.assertEqual(self.client.post(url, {"image": SimpleUploadedFile("grande.png", b"x" * (8 * 1024 * 1024 + 1))}, format="multipart").status_code, 400)
+        message.delete()
+        self.assertFalse(original_path.exists())
+
+    def test_analisis_de_imagen_reutiliza_vision_y_cache(self):
+        self._private_images()
+        self.client.force_authenticate(user=self.editor)
+        uploaded = self.client.post(f"/api/projects/{self.project.id}/chat/images/", {"image": self._image_file()}, format="multipart")
+        self.assertEqual(uploaded.status_code, 201)
+        analyze_url = f"/api/projects/{self.project.id}/chat/{uploaded.data['id']}/analyze/"
+        classes = '{"classes":[{"name":"Paciente","is_abstract":false,"attributes":[],"methods":[]},{"name":"Persona","is_abstract":true,"attributes":[],"methods":[]}]}'
+        relations = '{"relations":[{"source":"Paciente","target":"Persona","relation_type":"inheritance","source_multiplicity":"","target_multiplicity":"","label":""}]}'
+        with patch("apps.ai_core.views.llm.vision", side_effect=[classes, relations]) as vision:
+            result = self.client.post(analyze_url)
+            self.assertEqual(result.status_code, 200)
+            self.assertEqual(len(result.data["nodes"]), 2)
+            self.assertEqual(result.data["edges"][0]["data"]["relation_type"], "inheritance")
+            self.assertEqual(self.client.post(analyze_url).data["nodes"], result.data["nodes"])
+            self.assertEqual(vision.call_count, 2)
+        self.project.refresh_from_db()
+        self.assertEqual(self.project.datos_diagrama, {})
+
+    def test_imagen_se_difunde_a_dos_clientes(self):
+        self._private_images()
+        async_to_sync(self._image_websocket_scenario)()
+
+    async def _image_websocket_scenario(self):
+        from asgiref.sync import sync_to_async
+
+        async def connect(user):
+            client = WebsocketCommunicator(DiagramConsumer.as_asgi(), f"/ws/diagram/{self.project.id}/")
+            client.scope["user"] = user
+            client.scope["url_route"] = {"kwargs": {"diagram_id": str(self.project.id)}}
+            accepted, _ = await client.connect()
+            self.assertTrue(accepted)
+            return client
+
+        owner = await connect(self.owner)
+        await owner.receive_json_from()
+        viewer = await connect(self.viewer)
+        await owner.receive_json_from()
+        await viewer.receive_json_from()
+
+        def upload():
+            client = APIClient()
+            client.force_authenticate(user=self.owner)
+            return client.post(f"/api/projects/{self.project.id}/chat/images/",
+                               {"image": self._image_file()}, format="multipart")
+
+        response = await sync_to_async(upload, thread_sensitive=True)()
+        self.assertEqual(response.status_code, 201)
+        for client in (owner, viewer):
+            event = await client.receive_json_from()
+            self.assertEqual(event["type"], "chat_message")
+            self.assertEqual(event["message"]["kind"], "image")
+            self.assertEqual(event["message"]["id"], response.data["id"])
+        await viewer.disconnect()
+        await owner.disconnect()
 
     def test_websocket_persistencia_difusion_y_rechazos(self):
         async_to_sync(self._websocket_scenario)()

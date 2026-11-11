@@ -150,6 +150,7 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
+CHAT_IMAGE_ROOT = BASE_DIR / "private_chat_images"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

@@ -79,9 +79,13 @@ export default function ImageToUMLModal({ isOpen, onClose, onApply }) {
     }
   };
 
-  const handleApply = () => {
+  const handleApply = async () => {
     if (!result?.nodes?.length) return;
-    onApply(result.nodes, result.edges || []);
+    const applied = await onApply(result.nodes, result.edges || []);
+    if (!applied) {
+      toast.error('No se pudo guardar el diagrama. Intenta de nuevo.');
+      return;
+    }
     toast.success(`${result.nodes.length} clase(s) importadas al canvas`, { icon: '🎯', duration: 3000 });
     handleClose();
   };

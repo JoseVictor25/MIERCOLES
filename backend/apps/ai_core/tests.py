@@ -103,3 +103,37 @@ class AIEndpointsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.data["nodes"]), 1)
         self.assertIn("No se pudieron extraer relaciones", response.data["description"])
+
+    @patch("apps.ai_core.llm.vision")
+    def test_vision_acepta_listas_de_clases_y_relaciones(self, vision):
+        vision.side_effect = [
+            '[{"name":"Paciente","is_abstract":false,"attributes":[],"methods":[]},'
+            '{"name":"Persona","is_abstract":false,"attributes":[],"methods":[]}]',
+            '[{"source":"Paciente","target":"Persona","relation_type":"inheritance",'
+            '"source_multiplicity":"","target_multiplicity":"","label":""}]',
+        ]
+        image = Image.new("RGB", (40, 40), "white")
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        upload = SimpleUploadedFile("uml.png", buffer.getvalue(), content_type="image/png")
+        response = self.client.post("/api/ai/vision/", {"image": upload}, format="multipart")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data["nodes"]), 2)
+        self.assertEqual(len(response.data["edges"]), 1)
+
+    @patch("apps.ai_core.llm.requests.post")
+    def test_schema_reintenta_sin_formato_si_servidor_rechaza(self, post):
+        rejected = Mock(status_code=400, ok=False, text="response_format json_schema no soportado")
+        post.side_effect = [rejected, self.completion('{"reply":"Bien","updates":[]}'),
+                            self.completion('{"reply":"Otra","updates":[]}')]
+        previous = llm._SCHEMA_UNSUPPORTED
+        llm._SCHEMA_UNSUPPORTED = False
+        try:
+            schema = {"type": "object", "properties": {}}
+            self.assertIn("Bien", llm.chat([{"role": "user", "content": "hola"}], response_schema=schema))
+            self.assertIn("response_format", post.call_args_list[0].kwargs["json"])
+            self.assertNotIn("response_format", post.call_args_list[1].kwargs["json"])
+            llm.chat([{"role": "user", "content": "hola"}], response_schema=schema)
+            self.assertNotIn("response_format", post.call_args_list[2].kwargs["json"])
+        finally:
+            llm._SCHEMA_UNSUPPORTED = previous

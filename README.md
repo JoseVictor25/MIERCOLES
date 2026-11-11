@@ -67,3 +67,12 @@ LLM_TIMEOUT=180
 ```
 
 Reinicia Django después de cambiar variables. Para Ollama usa `LLM_BASE_URL=http://localhost:11434/v1` y los nombres que entregue `GET /v1/models`; vLLM usa su URL compatible. `GET /api/ai/diagnose/` requiere autenticación y muestra la disponibilidad del servidor y modelos.
+
+
+## Intercambio XMI/XML
+
+El menú Archivo exporta XMI UML 2.5.1 por defecto (namespaces OMG XMI 20131001 y UML 20161101). La opción XMI 2.1 conserva el exportador anterior. La importación muestra una vista previa sin guardar; dueño y editores pueden agregar el contenido al diagrama actual o reemplazarlo. Al agregar, los nombres duplicados reciben un sufijo y los nodos se desplazan. El resultado se guarda y se difunde por la sincronización habitual.
+
+En Enterprise Architect, crea o abre un proyecto y usa **Publish > Model Exchange > Import > XMI File** para elegir el archivo `_uml251.xmi`. El paquete contiene clases, relaciones y un diagrama; la extensión de UMLCraft conserva coordenadas exactas para volver a importar aquí. EA puede ignorar esa extensión y usar su propia disposición. Se aceptan XMI UML 2.5.1, 2.4.1 y 2.1 de herramientas como EA, StarUML y Papyrus cuando usan referencias UML estándar. Los perfiles y elementos propietarios no reconocidos se omiten con advertencias. La vista previa limita cada archivo a 5 MB y rechaza DTD y entidades XML.
+
+La documentación de EA enumera oficialmente XMI 2.1 para UML 2.x; si tu versión no acepta el archivo 2.5.1, usa **Exportar XMI 2.1 (compatibilidad)**. Al importar, activa **Import Diagrams** para incluir el diagrama. La compatibilidad del archivo 2.5.1 con una instalación concreta de EA requiere verificación en esa versión.

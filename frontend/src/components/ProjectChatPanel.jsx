@@ -213,6 +213,15 @@ export default function ProjectChatPanel({ isOpen, onClose, projectId, userId, c
           const day = date.toDateString();
           const previousDay = index ? new Date(messages[index - 1].created_at).toDateString() : null;
           const forMe = message.is_ai && message.reply_to_user_id === userId;
+          if (message.kind === 'error' || message.meta?.error) {
+            return <div key={message.id}>
+              {day !== previousDay && <div className="project-chat-day"><span>{date.toLocaleDateString('es-BO', { day: 'numeric', month: 'long', year: 'numeric' })}</span></div>}
+              <div className="project-chat-system-notice" role="status">
+                <span>IA · aviso para @{message.reply_to_username || participants[message.reply_to_user_id] || 'Alguien'}</span>
+                {message.content}
+              </div>
+            </div>;
+          }
           return <div key={message.id}>
             {day !== previousDay && <div className="project-chat-day"><span>{date.toLocaleDateString('es-BO', { day: 'numeric', month: 'long', year: 'numeric' })}</span></div>}
             <div className={`project-chat-message ${own ? 'own' : ''} ${message.is_ai ? 'ai' : ''} ${forMe ? 'for-me' : ''}`}>

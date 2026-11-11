@@ -30,6 +30,7 @@ export default function StarUMLMenuBar({
   onExportXMI,
   onImportXMI,
   onDeleteProject,
+  canEdit = false,
   collaboratorsCount = 0,
   isOwner = false,
   onUndo,
@@ -192,22 +193,27 @@ export default function StarUMLMenuBar({
         <div style={dividerStyle} />
 
         <button
-          onClick={onExportXMI}
+          onClick={() => onExportXMI('2.5.1')}
           style={actionBtnStyle}
-          title="Exportar diagrama en formato XMI"
+          title="Exportar XMI UML 2.5.1"
         >
           <FileDown size={13} color="#60a5fa" />
-          <span>Exportar XMI</span>
+          <span>Exportar XMI (UML 2.5.1)</span>
         </button>
 
-        <button
+        <button onClick={() => onExportXMI('2.1')} style={actionBtnStyle} title="Formato de compatibilidad XMI 2.1">
+          <FileDown size={13} color="#60a5fa" />
+          <span>Exportar XMI 2.1 (compatibilidad)</span>
+        </button>
+
+        {canEdit && <button
           onClick={handleImportClick}
           style={actionBtnStyle}
-          title="Importar diagrama en formato XMI"
+          title="Importar XMI/XML"
         >
           <FileUp size={13} color="#f472b6" />
-          <span>Importar XMI</span>
-        </button>
+          <span>Importar XMI/XML...</span>
+        </button>}
         <input 
           type="file" 
           accept=".xmi,.xml" 

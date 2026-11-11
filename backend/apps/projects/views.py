@@ -8,6 +8,8 @@ from apps.accounts.models import User
 from .models import Project, ProjectCollaborator, DiagramSnapshot
 from .serializers import ProjectSerializer, ProjectCollaboratorSerializer, AddCollaboratorSerializer, DiagramSnapshotSerializer
 from .permissions import IsProjectOwner, IsProjectMember
+from .generators.xmi_uml251 import generate_xmi_251
+from .generators.xmi_importer import parse_xmi_preview, MAX_XMI_BYTES
 
 
 def check_access(project, user, require_editor=False):
@@ -276,8 +278,13 @@ def import_xmi(request, pk):
         return Response({"detail": "No se envió ningún archivo."}, status=status.HTTP_400_BAD_REQUEST)
         
     file_obj = request.FILES["file"]
+    if file_obj.size > MAX_XMI_BYTES:
+        return Response({"detail": "El archivo XMI supera el límite de 5 MB."}, status=status.HTTP_400_BAD_REQUEST)
     try:
         raw_bytes = file_obj.read()
+        import re
+        if re.search(rb"<!\s*(?:DOCTYPE|ENTITY)\b", raw_bytes, re.IGNORECASE):
+            return Response({"detail": "No se permiten DOCTYPE ni entidades XML."}, status=status.HTTP_400_BAD_REQUEST)
         from .generators.xmi_parser import parse_xmi
         diagram_data = parse_xmi(raw_bytes)
         
@@ -297,4 +304,53 @@ def import_xmi(request, pk):
         import traceback
         traceback.print_exc()
         return Response({"detail": f"Error parseando XMI: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def project_xmi(request, pk):
+    """Exporta XMI UML 2.5.1 o el formato 2.1 heredado."""
+    project = get_object_or_404(Project, pk=pk)
+    allowed, detail = check_access(project, request.user)
+    if not allowed:
+        return Response({"detail": detail}, status=status.HTTP_403_FORBIDDEN)
+    version = request.query_params.get("version", "2.5.1")
+    if version == "2.5.1":
+        content = generate_xmi_251(project.datos_diagrama or {}, project.name)
+        suffix = "uml251"
+    elif version == "2.1":
+        from .generators.xmi_generator import generate_xmi
+        content = generate_xmi(project.datos_diagrama or {}, project.name)
+        suffix = "uml21"
+    else:
+        return Response({"detail": "Versión XMI no admitida. Usa 2.5.1 o 2.1."}, status=status.HTTP_400_BAD_REQUEST)
+    response = HttpResponse(content, content_type="application/xml; charset=utf-8")
+    filename = "".join(c if c.isalnum() or c in "-_" else "_" for c in project.name) or "proyecto"
+    response["Content-Disposition"] = f'attachment; filename="{filename}_{suffix}.xmi"'
+    return response
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser])
+def project_xmi_preview(request, pk):
+    """Analiza un XMI antes de que el usuario decida aplicarlo al lienzo."""
+    project = get_object_or_404(Project, pk=pk)
+    allowed, detail = check_access(project, request.user, require_editor=True)
+    if not allowed:
+        return Response({"detail": detail}, status=status.HTTP_403_FORBIDDEN)
+    uploaded = request.FILES.get("file")
+    if not uploaded:
+        return Response({"detail": "Selecciona un archivo XMI/XML."}, status=status.HTTP_400_BAD_REQUEST)
+    if uploaded.size > MAX_XMI_BYTES:
+        return Response({"detail": "El archivo XMI supera el límite de 5 MB."}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        diagram = parse_xmi_preview(uploaded.read())
+    except ValueError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    counts = {}
+    for edge in diagram["edges"]:
+        relation = edge.get("data", {}).get("relation_type", "association")
+        counts[relation] = counts.get(relation, 0) + 1
+    return Response({"classes": len(diagram["nodes"]), "relations": counts, "warnings": diagram["warnings"], "version": diagram["version"], "diagram": {"nodes": diagram["nodes"], "edges": diagram["edges"]}})
 

@@ -10,6 +10,8 @@ from .views import (
     generate_spring_boot,
     export_xmi,
     import_xmi,
+    project_xmi,
+    project_xmi_preview,
 )
 
 urlpatterns = [
@@ -23,4 +25,6 @@ urlpatterns = [
     path("projects/<int:pk>/generate/spring-boot/", generate_spring_boot, name="project-generate-spring-boot"),
     path("projects/<int:pk>/export-xmi/", export_xmi, name="project-export-xmi"),
     path("projects/<int:pk>/import-xmi/", import_xmi, name="project-import-xmi"),
+    path("projects/<int:pk>/xmi/", project_xmi, name="project-xmi"),
+    path("projects/<int:pk>/xmi/preview/", project_xmi_preview, name="project-xmi-preview"),
 ]

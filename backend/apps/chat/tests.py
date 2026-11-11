@@ -192,6 +192,66 @@ class ChatTests(TransactionTestCase):
         self.assertIn("Propongo:", answer.content)
         self.assertNotIn("Ya agregué", answer.content)
 
+    def test_json_roto_reintenta_y_recupera_reply(self):
+        ProjectAISettings.objects.create(project=self.project, mode="proposer")
+        current = ChatMessage.objects.create(project=self.project, author=self.owner, content="@ia qué clases faltan")
+
+        class Layer:
+            async def group_send(self, group, event):
+                pass
+
+        broken = '{"reply":"Revisa clases","updates:[}'
+        still_broken = '{"reply":"Revisa relaciones","updates":[}'
+        with patch("apps.chat.ai_worker.llm.chat", side_effect=[broken, still_broken]) as chat:
+            async_to_sync(_answer)(self.project.id, self.owner.id, "owner", "owner", current.id, Layer())
+        answer = ChatMessage.objects.filter(is_ai=True).get()
+        self.assertEqual(chat.call_count, 2)
+        self.assertEqual(answer.kind, "text")
+        self.assertEqual(answer.content, "Revisa relaciones")
+        self.assertEqual(answer.meta, {})
+
+    def test_respuesta_ilegible_se_guarda_como_error(self):
+        ProjectAISettings.objects.create(project=self.project, mode="proposer")
+        current = ChatMessage.objects.create(project=self.project, author=self.owner, content="@ia revisa el diseño")
+
+        class Layer:
+            async def group_send(self, group, event):
+                pass
+
+        with patch("apps.chat.ai_worker.llm.chat", side_effect=["texto roto", "sigue roto"]):
+            async_to_sync(_answer)(self.project.id, self.owner.id, "owner", "owner", current.id, Layer())
+        answer = ChatMessage.objects.filter(is_ai=True).get()
+        self.assertEqual(answer.kind, "error")
+        self.assertTrue(answer.meta["error"])
+        self.assertIn("respuesta ilegible", answer.content)
+
+    def test_errores_previos_no_contaminan_prompt(self):
+        ChatMessage.objects.create(project=self.project, is_ai=True, reply_to_user=self.owner,
+                                   content="ERROR MARCADO", kind="error", meta={"error": True})
+        ChatMessage.objects.create(project=self.project, is_ai=True, reply_to_user=self.owner,
+                                   content="No pude procesar la consulta. Intenta de nuevo.")
+        ChatMessage.objects.create(project=self.project, is_ai=True, reply_to_user=self.owner, content="")
+        current = ChatMessage.objects.create(project=self.project, author=self.owner, content="@ia pregunta nueva")
+        diagram, _, mode, persona, individual, room = async_to_sync(_context)(self.project.id, self.owner.id, current.id)
+        prompt = _prompt("owner", "owner", "pregunta nueva", diagram, persona, mode, individual, room)
+        self.assertNotIn("ERROR MARCADO", prompt)
+        self.assertNotIn("No pude procesar", prompt)
+
+    def test_consejo_en_modo_proponente_no_crea_propuesta(self):
+        ProjectAISettings.objects.create(project=self.project, mode="proposer")
+        current = ChatMessage.objects.create(project=self.project, author=self.owner, content="@ia qué clases faltan")
+
+        class Layer:
+            async def group_send(self, group, event):
+                pass
+
+        with patch("apps.chat.ai_worker.llm.chat", return_value='{"reply":"Revisa si falta una clase de Servicio.","updates":[]}') as chat:
+            async_to_sync(_answer)(self.project.id, self.owner.id, "owner", "owner", current.id, Layer())
+        answer = ChatMessage.objects.filter(is_ai=True).get()
+        self.assertEqual(answer.kind, "text")
+        self.assertEqual(answer.content, "Revisa si falta una clase de Servicio.")
+        self.assertIn("Preguntas de consejo", chat.call_args.args[0][0]["content"])
+
     def test_decision_websocket_informa_errores_al_remitente(self):
         message = ChatMessage.objects.create(project=self.project, is_ai=True, reply_to_user=self.editor,
                                              kind="proposal", content="Propongo agregar Factura",

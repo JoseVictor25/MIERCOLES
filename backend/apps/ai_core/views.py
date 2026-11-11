@@ -23,6 +23,20 @@ def _parse_json_safe(text):
     return None
 
 
+def _parse_vision_json(text):
+    """Acepta objeto o lista JSON, incluso si el modelo añade cercas de código."""
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char in "{[":
+            try:
+                value, _ = decoder.raw_decode(text[index:])
+                if isinstance(value, (dict, list)):
+                    return value
+            except json.JSONDecodeError:
+                continue
+    return None
+
+
 def _json_del_modelo(messages, model=None, temperature=0.2):
     raw = llm.chat(messages, model=model, temperature=temperature)
     parsed = _parse_json_safe(raw)
@@ -260,8 +274,8 @@ def ai_vision(request):
         return Response({"detail": "El archivo no es una imagen valida."}, status=400)
 
     try:
-        classes_data = _parse_json_safe(llm.vision(CLASSES_PROMPT, image_bytes))
-        classes = classes_data.get("classes") if isinstance(classes_data, dict) else None
+        classes_data = _parse_vision_json(llm.vision(CLASSES_PROMPT, image_bytes))
+        classes = classes_data if isinstance(classes_data, list) else classes_data.get("classes") if isinstance(classes_data, dict) else None
         if not isinstance(classes, list):
             raise llm.LLMBadOutput("El modelo no devolvio las clases en JSON valido.")
         classes = [c for c in classes if isinstance(c, dict) and isinstance(c.get("name"), str) and c["name"].strip()]
@@ -275,12 +289,13 @@ def ai_vision(request):
     description = f"Se detectaron {len(classes)} clases."
     relations = []
     try:
-        data = _parse_json_safe(llm.vision(RELATIONS_PROMPT.replace("{names}", ", ".join(names)), image_bytes))
-        if not isinstance(data, dict) or not isinstance(data.get("relations"), list):
+        data = _parse_vision_json(llm.vision(RELATIONS_PROMPT.replace("{names}", ", ".join(names)), image_bytes))
+        found_relations = data if isinstance(data, list) else data.get("relations") if isinstance(data, dict) else None
+        if not isinstance(found_relations, list):
             raise llm.LLMBadOutput("El modelo no devolvio relaciones en JSON valido.")
         known = set(names)
         seen = set()
-        for rel in data["relations"]:
+        for rel in found_relations:
             if not isinstance(rel, dict) or rel.get("source") not in known or rel.get("target") not in known:
                 continue
             pair = frozenset((rel["source"], rel["target"]))

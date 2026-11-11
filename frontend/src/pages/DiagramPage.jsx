@@ -34,6 +34,7 @@ import { useChatStore } from '../store/chatStore';
 import { applyAIUpdates } from '../utils/applyAIUpdates';
 import ImageToUMLModal from '../components/ImageToUMLModal';
 import StarUMLMenuBar from '../components/StarUMLMenuBar';
+import XMIImportModal from '../components/XMIImportModal';
 import StarUMLToolbox from '../components/StarUMLToolbox';
 import HelpChatBot from '../components/HelpChatBot';
 import { useCollaboration } from '../hooks/useCollaboration';
@@ -191,6 +192,7 @@ function DiagramPageInner() {
   const loadChatHistory = useChatStore(state => state.loadHistory);
   useEffect(() => { if (id) loadChatHistory(id); }, [id, loadChatHistory]);
   const [showImageModal, setShowImageModal] = useState(false);
+  const [xmiPreview, setXMIPreview] = useState(null);
   const [selectedNode, setSelectedNode] = useState(null);
   const [selectedRelType, setSelectedRelType] = useState('select');
   const [connectingSourceId, setConnectingSourceId] = useState(null);
@@ -1176,16 +1178,16 @@ function DiagramPageInner() {
   }, [nodes, currentProject]);
 
   // ── CU-08: Exportar e Importar XMI ──────────────────────────────────────────
-  const handleExportXMI = useCallback(async () => {
+  const handleExportXMI = useCallback(async (version = '2.5.1') => {
     if (!currentProject) return;
     const t = toast.loading('Exportando XMI...');
     try {
-      const res = await api.get(`projects/${currentProject.id}/export-xmi/`, { responseType: 'blob' });
+      const res = await api.get(`projects/${currentProject.id}/xmi/?version=${version}`, { responseType: 'blob' });
       const blob = new Blob([res.data], { type: 'application/xml' });
       const downloadUrl = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = downloadUrl;
-      link.download = `${currentProject.name.replace(/\s+/g, '_')}.xmi`;
+      link.download = `${currentProject.name.replace(/\s+/g, '_')}_${version === '2.1' ? 'uml21' : 'uml251'}.xmi`;
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -1196,37 +1198,73 @@ function DiagramPageInner() {
     }
   }, [currentProject]);
 
-  const handleImportXMI = useCallback(async (e) => {
+  const handleImportXMI = useCallback(async (event) => {
     if (!currentProject) return;
-    const file = e.target.files?.[0];
+    const file = event.target.files?.[0];
     if (!file) return;
-    
+    event.target.value = null;
     const formData = new FormData();
     formData.append('file', file);
-    
-    const t = toast.loading('Importando archivo XMI...');
+    const loadingToast = toast.loading('Analizando archivo XMI...');
     try {
-      const res = await api.post(`projects/${currentProject.id}/import-xmi/`, formData);
-      if (res.data && res.data.diagram) {
-        takeSnapshot();
-        const newNodes = res.data.diagram.nodes || [];
-        const newEdges = (res.data.diagram.edges || []).map(edge => ({ ...edge, reconnectable: true }));
-        setNodes(newNodes);
-        setEdges(newEdges);
-        if (!isApplyingRemote.current) sendDiagramUpdate(newNodes, newEdges);
-        setTimeout(() => fitView && fitView({ padding: 0.2, duration: 400 }), 150);
-        toast.success('Diagrama XMI importado', { id: t, icon: '⬆️' });
-      }
-    } catch (err) {
-      console.error('Error al importar archivo XMI:', err);
-      const msg = err.response?.data?.detail || err.message || 'Error al importar archivo XMI';
-      toast.error(msg, { id: t });
+      const response = await api.post(`projects/${currentProject.id}/xmi/preview/`, formData);
+      setXMIPreview(response.data);
+      toast.dismiss(loadingToast);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'No se pudo leer el archivo XMI/XML.', { id: loadingToast });
     }
-    // reset input
-    e.target.value = null;
-  }, [currentProject, setNodes, setEdges, sendDiagramUpdate, fitView, takeSnapshot]);
+  }, [currentProject]);
 
-  // ── CU-10: Aplicar diagrama generado desde imagen al canvas ───────────────
+  const applyXMIImport = useCallback(async (mode) => {
+    if (!xmiPreview?.diagram) return;
+    const importedNodes = xmiPreview.diagram.nodes || [];
+    const importedEdges = xmiPreview.diagram.edges || [];
+    let nextNodes = importedNodes;
+    let nextEdges = importedEdges;
+    if (mode === 'add') {
+      const names = new Set(nodes.map(node => node.data?.name));
+      const ids = new Set(nodes.map(node => node.id));
+      const idMap = new Map();
+      const offset = nodes.length ? Math.max(...nodes.map(node => (node.position?.x || 0) + (node.width || 180))) + 100 : 0;
+      nextNodes = importedNodes.map((node, index) => {
+        let name = node.data?.name || `Clase${index + 1}`;
+        if (names.has(name)) {
+          const base = name;
+          let suffix = 2;
+          while (names.has(`${base}_${suffix}`)) suffix++;
+          name = `${base}_${suffix}`;
+        }
+        names.add(name);
+        let nextId = node.id;
+        while (ids.has(nextId)) nextId = `class-${crypto.randomUUID()}`;
+        ids.add(nextId);
+        idMap.set(node.id, nextId);
+        return { ...node, id: nextId, position: { x: (node.position?.x || 0) + offset, y: node.position?.y || 0 }, data: { ...node.data, id: nextId, name } };
+      });
+      const edgeIds = new Set(edges.map(edge => edge.id));
+      nextEdges = importedEdges.map(edge => {
+        let nextId = edge.id;
+        while (edgeIds.has(nextId)) nextId = `edge-${crypto.randomUUID()}`;
+        edgeIds.add(nextId);
+        const data = { ...edge.data };
+        if (data.associationClassId) data.associationClassId = idMap.get(data.associationClassId);
+        return { ...edge, id: nextId, source: idMap.get(edge.source), target: idMap.get(edge.target), data };
+      });
+      nextNodes = [...nodes, ...nextNodes];
+      nextEdges = [...edges, ...nextEdges];
+    }
+    nextEdges = nextEdges.map(edge => ({ ...edge, reconnectable: true }));
+    takeSnapshot();
+    if (!await saveDiagram(nextNodes, nextEdges)) return;
+    setNodes(nextNodes);
+    setEdges(nextEdges);
+    if (!isApplyingRemote.current) sendDiagramUpdate(nextNodes, nextEdges);
+    setXMIPreview(null);
+    setTimeout(() => fitView?.({ padding: 0.2, duration: 400 }), 150);
+    toast.success('Diagrama XMI importado');
+  }, [xmiPreview, nodes, edges, takeSnapshot, setNodes, setEdges, saveDiagram, sendDiagramUpdate, fitView]);
+
+  // Aplicar diagrama generado desde imagen al canvas
   const handleApplyVisionDiagram = useCallback((visionNodes, visionEdges) => {
     takeSnapshot();
     setNodes(prev => {
@@ -1324,7 +1362,10 @@ function DiagramPageInner() {
         onFitView={() => fitView && fitView({ padding: 0.2, duration: 400 })}
         collaboratorsCount={currentProject?.collaborators?.length || 0}
         isOwner={currentProject?.is_owner}
+        canEdit={!!(currentProject?.is_owner || currentProject?.collaborators?.some(c => c.user?.id === user?.id && c.role === 'editor'))}
       />
+
+      {xmiPreview && <XMIImportModal preview={xmiPreview} onCancel={() => setXMIPreview(null)} onImport={applyXMIImport} />}
 
       {/* ── Área Principal de Diagramado (Toolbox + Canvas + Inspector) ── */}
       <div className="diagram-container" style={{ display: 'flex', flex: 1, position: 'relative', overflow: 'hidden' }}>

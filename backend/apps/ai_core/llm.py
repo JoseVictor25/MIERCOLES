@@ -1,9 +1,13 @@
 """Acceso único a servidores locales compatibles con la API de OpenAI."""
 
 import base64
+import re
 
 import requests
 from django.conf import settings
+
+
+_SCHEMA_UNSUPPORTED = False
 
 
 class LLMUnavailable(Exception):
@@ -37,15 +41,29 @@ def _check_response(response, model):
         raise LLMUnavailable(f"El servidor local de IA rechazó la solicitud (HTTP {response.status_code}): {response.text[:180]}")
 
 
-def chat(messages, model=None, timeout=None, temperature=0.2) -> str:
+def chat(messages, model=None, timeout=None, temperature=0.2, response_schema=None) -> str:
     model = model or settings.LLM_TEXT_MODEL
+    global _SCHEMA_UNSUPPORTED
     try:
+        payload = {"model": model, "messages": messages, "temperature": temperature, "stream": False}
+        if response_schema is not None and not _SCHEMA_UNSUPPORTED:
+            payload["response_format"] = {"type": "json_schema", "json_schema": {
+                "name": "respuesta_ia", "strict": True, "schema": response_schema,
+            }}
         response = requests.post(
             _url("chat/completions"),
             headers=_headers(),
-            json={"model": model, "messages": messages, "temperature": temperature, "stream": False},
+            json=payload,
             timeout=timeout or settings.LLM_TIMEOUT,
         )
+        if ("response_format" in payload and response.status_code == 400
+                and re.search(r"response_format|json_schema|structured.output|grammar|schema|format", response.text, re.IGNORECASE)):
+            _SCHEMA_UNSUPPORTED = True
+            payload = {key: value for key, value in payload.items() if key != "response_format"}
+            response = requests.post(
+                _url("chat/completions"), headers=_headers(), json=payload,
+                timeout=timeout or settings.LLM_TIMEOUT,
+            )
         _check_response(response, model)
         content = response.json()["choices"][0]["message"]["content"]
         if not isinstance(content, str) or not content.strip():

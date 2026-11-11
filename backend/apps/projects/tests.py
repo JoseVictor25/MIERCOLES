@@ -9,6 +9,7 @@ from rest_framework.test import APITestCase
 from apps.accounts.models import User
 from .generators.xmi_generator import generate_xmi
 from .generators.xmi_importer import parse_xmi_preview
+from .generators.xmi_parser import parse_xmi
 from .generators.xmi_uml251 import generate_xmi_251, XMI, UML
 from .models import Project, ProjectCollaborator
 
@@ -37,6 +38,38 @@ def sample_diagram():
 
 
 class XMITests(SimpleTestCase):
+    def test_abstracta_en_xmi_251_y_21(self):
+        for version, exporter in (("2.5.1", generate_xmi_251), ("2.1", generate_xmi)):
+            with self.subTest(version=version):
+                root = ET.fromstring(exporter(sample_diagram(), "Prueba"))
+                classes = {el.get("name"): el for el in root.iter() if el.tag == "packagedElement" and el.get("name") in ("Persona", "Cliente")}
+                self.assertEqual(classes["Persona"].get("isAbstract"), "true")
+                self.assertNotIn("isAbstract", classes["Cliente"].attrib)
+
+                ea = next(el for el in root.iter() if el.tag.endswith("Extension") and el.get("extender") == "Enterprise Architect")
+                elements = {el.get("name"): el for el in ea.iter() if el.tag == "element" and el.get("name") in ("Persona", "Cliente")}
+                self.assertEqual(elements["Persona"].find("properties").get("isAbstract"), "true")
+                self.assertNotIn("isAbstract", elements["Cliente"].find("properties").attrib)
+
+                # El valor UML estándar debe bastar incluso sin la extensión de EA.
+                root.remove(ea)
+                content = ET.tostring(root)
+                for importer in (parse_xmi_preview, parse_xmi):
+                    with self.subTest(version=version, importer=importer.__name__):
+                        parsed = importer(content)
+                        by_name = {node["data"]["name"]: node for node in parsed["nodes"]}
+                        self.assertTrue(by_name["Persona"]["data"]["is_abstract"])
+                        self.assertFalse(by_name["Cliente"]["data"]["is_abstract"])
+
+                # También se recupera desde las propiedades EA si falta el atributo UML.
+                with_ea = ET.fromstring(exporter(sample_diagram(), "Prueba"))
+                abstract_class = next(el for el in with_ea.iter() if el.tag == "packagedElement" and el.get("name") == "Persona")
+                abstract_class.attrib.pop("isAbstract")
+                for importer in (parse_xmi_preview, parse_xmi):
+                    parsed = importer(ET.tostring(with_ea))
+                    by_name = {node["data"]["name"]: node for node in parsed["nodes"]}
+                    self.assertTrue(by_name["Persona"]["data"]["is_abstract"])
+
     def test_exportacion_referencias_y_namespaces(self):
         root = ET.fromstring(generate_xmi_251(sample_diagram(), "Proyecto & Uno"))
         self.assertEqual(root.tag, f"{{{XMI}}}XMI")

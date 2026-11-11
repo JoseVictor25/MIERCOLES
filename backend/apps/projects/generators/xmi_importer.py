@@ -105,6 +105,7 @@ def parse_xmi_preview(raw):
     edge_raw_ids = {}
     edge_types = {}
     stereotypes = {}
+    ea_abstract = {}
     for ext in root.iter():
         if _local(ext.tag) != "Extension" or ext.get("extender") != "UMLCraft":
             continue
@@ -121,6 +122,14 @@ def parse_xmi_preview(raw):
             elif _local(item.tag) == "edge" and item.get("subject"):
                 edge_raw_ids[item.get("subject")] = item.get("rawId")
                 edge_types[item.get("subject")] = item.get("relationType")
+    for ext in root.iter():
+        if _local(ext.tag) != "Extension" or ext.get("extender") != "Enterprise Architect":
+            continue
+        for item in ext.iter():
+            if _local(item.tag) == "element" and _attr(item, "idref"):
+                properties = next((child for child in item if _local(child.tag) == "properties"), None)
+                if properties is not None:
+                    ea_abstract[_attr(item, "idref")] = properties.get("isAbstract")
     # Las extensiones de EA/Papyrus pueden incluir geometría sin la extensión propia.
     for item in root.iter():
         subject, geometry = item.get("subject"), item.get("geometry", "")
@@ -135,7 +144,8 @@ def parse_xmi_preview(raw):
     for index, (eid, (el, kind)) in enumerate(classifiers.items()):
         raw_id = raw_ids.get(eid) or f"class-{uuid.uuid4().hex[:10]}"
         mapped[eid] = raw_id
-        data_node = {"id": raw_id, "name": el.get("name") or f"Clase{index + 1}", "is_abstract": el.get("isAbstract", "false").lower() == "true", "is_interface": kind == "Interface", "attributes": [], "methods": []}
+        abstract_value = el.get("isAbstract") or ea_abstract.get(eid) or "false"
+        data_node = {"id": raw_id, "name": el.get("name") or f"Clase{index + 1}", "is_abstract": str(abstract_value).lower() in ("true", "1"), "is_interface": kind == "Interface", "attributes": [], "methods": []}
         if kind == "Enumeration":
             data_node["is_enum"] = True
             data_node["literals"] = [c.get("name", "") for c in el if _local(c.tag) == "ownedLiteral"]

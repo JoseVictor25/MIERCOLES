@@ -64,8 +64,8 @@ def generate_xmi_251(diagram_data, project_name):
         data = n.get("data", {})
         kind = "uml:AssociationClass" if raw in assoc_class else "uml:Enumeration" if data.get("is_enum") or data.get("type") in ("enum", "enumeration") else "uml:Interface" if data.get("is_interface") or data.get("type") == "interface" else "uml:Class"
         attrs = {XI("type"): kind, XI("id"): node_ids[raw], "name": str(data.get("name") or "Clase"), "visibility": _vis(data.get("visibility", "+"))}
-        if kind in ("uml:Class", "uml:AssociationClass"):
-            attrs["isAbstract"] = str(bool(data.get("is_abstract"))).lower()
+        if kind in ("uml:Class", "uml:AssociationClass") and data.get("is_abstract"):
+            attrs["isAbstract"] = "true"
         element = ET.SubElement(package, "packagedElement", attrs)
         if kind == "uml:AssociationClass":
             assoc_edge = assoc_class[raw]
@@ -154,7 +154,10 @@ def generate_xmi_251(diagram_data, project_name):
         kind = "Interface" if n.get("data", {}).get("is_interface") else "Enumeration" if n.get("data", {}).get("is_enum") else "AssociationClass" if raw in assoc_class else "Class"
         element = ET.SubElement(ea_elements, "element", {XI("idref"): node_ids[raw], XI("type"): f"uml:{kind}", "name": str(n.get("data", {}).get("name", "")), "scope": "public"})
         ET.SubElement(element, "model", {"package": package.get(XI("id")), "ea_eleType": "element"})
-        ET.SubElement(element, "properties", {"sType": kind, "scope": "public"})
+        properties = {"sType": kind, "scope": "public"}
+        if n.get("data", {}).get("is_abstract"):
+            properties["isAbstract"] = "true"
+        ET.SubElement(element, "properties", properties)
         ET.SubElement(element, "extendedProperties", {"package_name": project_name or "Modelo"})
     connectors = ET.SubElement(ea, "connectors")
     for e in edges:

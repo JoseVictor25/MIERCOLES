@@ -157,6 +157,8 @@ def generate_xmi(diagram_data: dict, project_name: str) -> str:
             "name": c_name,
             "visibility": "public"
         }
+        if data.get("is_abstract"):
+            cls_attribs["isAbstract"] = "true"
         
         if is_assoc_class:
             matched_edge = assoc_class_to_edge[raw_id]
@@ -362,12 +364,15 @@ def generate_xmi(diagram_data: dict, project_name: str) -> str:
             "tpos": "0",
             "ea_eleType": "associationclass" if is_assoc_class else "element"
         })
-        ET.SubElement(c_el, "properties", {
+        properties = {
             "isSpecification": "false",
             "sType": "AssociationClass" if is_assoc_class else "Class",
             "nType": "0",
             "scope": "public"
-        })
+        }
+        if node.get("data", {}).get("is_abstract"):
+            properties["isAbstract"] = "true"
+        ET.SubElement(c_el, "properties", properties)
         ext_props = {
             "tagged": "0",
             "package_name": clean_name

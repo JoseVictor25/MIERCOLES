@@ -115,6 +115,7 @@ def parse_xmi(xmi_data) -> dict:
     # 3. Cache de nombres y atributos en extensiones de Enterprise Architect (<elements><element><attributes>...)
     ea_extension_attrs = {}
     ea_extension_names = {}
+    ea_extension_abstract = {}
     ea_assoc_classes = set()
     ea_assoc_class_links = {}  # connector_id -> assoc_class_id
     owned_end_types = {}       # end_id -> participant_class_id
@@ -138,6 +139,10 @@ def parse_xmi(xmi_data) -> dict:
             name_val = el.attrib.get('name')
             if ref_id and name_val:
                 ea_extension_names[ref_id] = name_val
+            if ref_id:
+                for child in el:
+                    if get_local_name(child.tag) == 'properties' and child.attrib.get('isAbstract') is not None:
+                        ea_extension_abstract[ref_id] = child.attrib['isAbstract']
 
             t = get_type_attr(el) or el.attrib.get('ea_eleType', '')
             
@@ -371,6 +376,7 @@ def parse_xmi(xmi_data) -> dict:
             "data": {
                 "id": reactflow_id,
                 "name": c_name,
+                "is_abstract": str(cls.attrib.get("isAbstract") or ea_extension_abstract.get(raw_id) or "false").lower() in ("true", "1"),
                 "attributes": attributes,
                 "methods": methods
             }

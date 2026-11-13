@@ -58,6 +58,8 @@ export function useCollaboration({ diagramId, nodes, edges, onRemoteUpdate, onCh
   const isUnmounting = useRef(false);
   const onChatMessageRef = useRef(onChatMessage);
   onChatMessageRef.current = onChatMessage;
+  const diagramRef = useRef({ nodes, edges });
+  diagramRef.current = { nodes, edges };
 
   const [collaborators, setCollaborators] = useState({}); // { userId: { username, x, y, color, lastSeen } }
   const [wsStatus, setWsStatus]           = useState('disconnected'); // 'connecting' | 'connected' | 'disconnected'
@@ -248,7 +250,9 @@ export function useCollaboration({ diagramId, nodes, edges, onRemoteUpdate, onCh
     const ws = wsRef.current;
     const text = typeof content === 'string' ? content.trim() : '';
     if (!ws || ws.readyState !== WebSocket.OPEN || !text || text.length > 2000) return false;
-    ws.send(JSON.stringify({ type: 'chat_message', content: text }));
+    const payload = { type: 'chat_message', content: text };
+    if (/(^|[^\w])@ia\b/i.test(text)) payload.diagram = diagramRef.current;
+    ws.send(JSON.stringify(payload));
     return true;
   }, []);
 

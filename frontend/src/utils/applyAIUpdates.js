@@ -1,5 +1,7 @@
 // Aplica propuestas de la IA sin modificar los arreglos originales.
 export function applyAIUpdates(nodes, edges, updates) {
+  const relationTypes = new Set(['association', 'directed_association', 'dependency',
+    'aggregation', 'composition', 'inheritance', 'realization', 'association_class']);
   let resultNodes = [...nodes];
   let resultEdges = [...edges];
   const applied = [];
@@ -36,32 +38,75 @@ export function applyAIUpdates(nodes, edges, updates) {
     } else if (action === 'rename_class') {
       if (!node || !update.new_name || findNode(update.new_name)) reason = 'No se puede renombrar la clase.';
       else resultNodes = resultNodes.map(n => n.id === node.id ? { ...n, data: { ...n.data, name: update.new_name } } : n);
-    } else if (action === 'add_attribute' || action === 'delete_attribute') {
+    } else if (action === 'set_abstract') {
+      if (!node || typeof update.is_abstract !== 'boolean') reason = 'Clase o estado abstracto inválido.';
+      else if (Boolean(node.data?.is_abstract) === update.is_abstract) reason = 'La clase ya tiene ese estado.';
+      else resultNodes = resultNodes.map(n => n.id === node.id ? {
+        ...n, data: { ...n.data, is_abstract: update.is_abstract },
+      } : n);
+    } else if (['add_attribute', 'delete_attribute', 'update_attribute', 'reorder_attributes'].includes(action)) {
       const target = findNode(update.class_name);
       const attrs = target?.data?.attributes || [];
       const exists = attrs.some(a => a.name?.toLowerCase() === String(update.attr_name || '').toLowerCase());
       if (!target) reason = 'La clase no existe.';
-      else if (!update.attr_name || update.attr_name.toLowerCase() === 'multiplicidad') reason = 'Nombre de atributo inválido.';
+      else if (action === 'reorder_attributes') {
+        const order = Array.isArray(update.order) ? update.order.map(name => String(name).toLowerCase()) : [];
+        const ordered = [];
+        for (const name of order) {
+          const attr = attrs.find(item => item.name?.toLowerCase() === name);
+          if (attr && !ordered.includes(attr)) ordered.push(attr);
+        }
+        const next = [...ordered, ...attrs.filter(attr => !ordered.includes(attr))];
+        if (!order.length || next.every((attr, index) => attr === attrs[index])) reason = 'Los atributos ya están en ese orden.';
+        else resultNodes = resultNodes.map(n => n.id === target.id ? { ...n, data: { ...n.data, attributes: next } } : n);
+      } else if (!update.attr_name || update.attr_name.toLowerCase() === 'multiplicidad') reason = 'Nombre de atributo inválido.';
       else if (action === 'add_attribute' && exists) reason = 'El atributo ya existe.';
       else if (action === 'delete_attribute' && !exists) reason = 'El atributo no existe.';
+      else if (action === 'update_attribute' && !exists) reason = 'El atributo no existe.';
+      else if (action === 'update_attribute' && !['new_name', 'data_type', 'visibility'].some(key => update[key])) reason = 'Falta indicar qué cambiar.';
+      else if (action === 'update_attribute' && update.new_name && attrs.some(a =>
+        a.name?.toLowerCase() === update.new_name.toLowerCase() &&
+        a.name?.toLowerCase() !== update.attr_name.toLowerCase())) reason = 'El nuevo nombre ya existe.';
       else {
         const next = action === 'add_attribute'
           ? [...attrs, { id: id('attr'), name: update.attr_name, data_type: update.data_type || 'String', visibility: update.visibility || '-' }]
-          : attrs.filter(a => a.name?.toLowerCase() !== update.attr_name.toLowerCase());
-        resultNodes = resultNodes.map(n => n.id === target.id ? { ...n, data: { ...n.data, attributes: next } } : n);
+          : action === 'delete_attribute'
+            ? attrs.filter(a => a.name?.toLowerCase() !== update.attr_name.toLowerCase())
+            : attrs.map(a => a.name?.toLowerCase() === update.attr_name.toLowerCase() ? {
+              ...a, name: update.new_name || a.name, data_type: update.data_type || a.data_type,
+              visibility: update.visibility || a.visibility,
+            } : a);
+        if (action === 'update_attribute' && JSON.stringify(next) === JSON.stringify(attrs)) reason = 'El atributo ya tiene esos valores.';
+        if (!reason) resultNodes = resultNodes.map(n => n.id === target.id ? { ...n, data: { ...n.data, attributes: next } } : n);
+      }
+    } else if (action === 'add_method' || action === 'delete_method') {
+      const target = findNode(update.class_name);
+      const methods = target?.data?.methods || [];
+      const exists = methods.some(m => m.name?.toLowerCase() === String(update.method_name || '').toLowerCase());
+      if (!target || !update.method_name) reason = 'Clase o método inválido.';
+      else if (action === 'add_method' && exists) reason = 'El método ya existe.';
+      else if (action === 'delete_method' && !exists) reason = 'El método no existe.';
+      else {
+        const next = action === 'add_method'
+          ? [...methods, { id: id('method'), name: update.method_name, return_type: update.return_type || 'void', visibility: '+', parameters: [] }]
+          : methods.filter(m => m.name?.toLowerCase() !== update.method_name.toLowerCase());
+        resultNodes = resultNodes.map(n => n.id === target.id ? { ...n, data: { ...n.data, methods: next } } : n);
       }
     } else if (action === 'add_relation') {
       const source = findNode(update.source_class), target = findNode(update.target_class);
       if (!source || !target || source.id === target.id || edge) reason = 'Las clases no existen o la relación ya existe.';
+      else if (!relationTypes.has(update.relation_type || 'association')) reason = 'Tipo de relación inválido.';
       else resultEdges.push({ id: id('edge'), type: 'umlEdge', reconnectable: true,
         source: source.id, target: target.id, sourceHandle: 'bottom-source', targetHandle: 'top-target',
         data: { relation_type: update.relation_type || 'association',
-          sourceMultiplicity: update.source_multiplicity || '', targetMultiplicity: update.target_multiplicity || '' } });
+          sourceMultiplicity: update.source_multiplicity || '', targetMultiplicity: update.target_multiplicity || '',
+          label: update.label || '' } });
     } else if (action === 'delete_relation') {
       if (!edge) reason = 'La relación no existe.';
       else resultEdges = resultEdges.filter(e => e.id !== edge.id);
     } else if (action === 'update_relation_type' || action === 'set_multiplicity') {
       if (!edge) reason = 'La relación no existe.';
+      else if (action === 'update_relation_type' && !relationTypes.has(update.relation_type)) reason = 'Tipo de relación inválido.';
       else {
         const forward = findNode(update.source_class)?.id === edge.source;
         const data = action === 'update_relation_type'

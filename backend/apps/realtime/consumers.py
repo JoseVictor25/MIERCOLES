@@ -105,8 +105,16 @@ class DiagramConsumer(AsyncWebsocketConsumer):
                 "type": "broadcast_chat_message", "message": message,
             })
             if has_mention(content) and await self._ai_is_enabled():
+                diagram = data.get("diagram")
+                if (not isinstance(diagram, dict) or
+                        not isinstance(diagram.get("nodes"), list) or
+                        not isinstance(diagram.get("edges"), list) or
+                        len(json.dumps(diagram, ensure_ascii=False).encode("utf-8")) > 1024 * 1024):
+                    diagram = None
+                if diagram is not None:
+                    ROOM_DIAGRAMS[self.room_group] = diagram
                 error = enqueue(self.diagram_id, self.user.id, self.username, self.project_role,
-                                message["id"], self.channel_layer)
+                                message["id"], self.channel_layer, diagram=diagram)
                 if error:
                     await self.send(text_data=json.dumps({"type": "chat_error", "detail": error}))
             return

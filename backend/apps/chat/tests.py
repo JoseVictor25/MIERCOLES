@@ -246,7 +246,7 @@ class ChatTests(TransactionTestCase):
         release = asyncio.Event()
         order = []
 
-        async def fake_answer(project_id, user_id, username, role, message_id, layer):
+        async def fake_answer(project_id, user_id, username, role, message_id, layer, diagram=None):
             order.append(username)
             if username == "owner":
                 started.set()
@@ -366,6 +366,74 @@ class ChatTests(TransactionTestCase):
                                              kind="proposal", content="Propongo agregar Factura",
                                              meta={"status": "pending", "updates": [{"action": "add_class", "name": "Factura"}]})
         async_to_sync(self._decision_scenario)(message.id)
+
+    def test_relacionar_publica_tarjeta_y_omite_atributo_repetido(self):
+        ProjectAISettings.objects.create(project=self.project, mode="proposer")
+        diagram = {"nodes": [
+            {"id": "m", "data": {"name": "Medico", "attributes": [{"id": "a", "name": "nombre"}]}},
+            {"id": "p", "data": {"name": "Paciente", "attributes": []}}], "edges": []}
+        self.project.datos_diagrama = diagram
+        self.project.save(update_fields=["datos_diagrama"])
+
+        class Layer:
+            async def group_send(self, group, event):
+                pass
+
+        current = ChatMessage.objects.create(project=self.project, author=self.owner,
+                                             content="@ia relaciona Medico con Paciente")
+        response = '{"reply":"Propongo relación","updates":[{"action":"add_relation","source_class":"Medico","target_class":"Paciente","relation_type":"association"}]}'
+        with patch("apps.chat.ai_worker.llm.chat", return_value=response):
+            async_to_sync(_answer)(self.project.id, self.owner.id, "owner", "owner", current.id, Layer())
+        answer = ChatMessage.objects.filter(is_ai=True).latest("id")
+        self.assertEqual(answer.kind, "proposal")
+        self.assertEqual(answer.meta["updates"][0]["action"], "add_relation")
+
+        current = ChatMessage.objects.create(project=self.project, author=self.owner,
+                                             content="@ia agrega nombre y licencia a Medico")
+        response = '{"reply":"Propongo atributos","updates":[{"action":"add_attribute","class_name":"Medico","attributes":[{"name":"nombre","data_type":"String"},{"name":"licencia","data_type":"String"}]}]}'
+        with patch("apps.chat.ai_worker.llm.chat", return_value=response):
+            async_to_sync(_answer)(self.project.id, self.owner.id, "owner", "owner", current.id, Layer())
+        answer = ChatMessage.objects.filter(is_ai=True).latest("id")
+        self.assertEqual([item["attr_name"] for item in answer.meta["updates"]], ["licencia"])
+        self.assertEqual(answer.meta["rejected"][0]["code"], "duplicate_attribute")
+        self.assertIn("ya existían", answer.content)
+
+    def test_promesa_sin_acciones_reintenta_y_pide_aclaracion(self):
+        ProjectAISettings.objects.create(project=self.project, mode="proposer")
+        current = ChatMessage.objects.create(project=self.project, author=self.owner,
+                                             content="@ia relaciona Medico con Paciente")
+
+        class Layer:
+            async def group_send(self, group, event):
+                pass
+
+        response = '{"reply":"Propongo relacionarlos","updates":[]}'
+        with patch("apps.chat.ai_worker.llm.chat", side_effect=[response, response]) as chat:
+            async_to_sync(_answer)(self.project.id, self.owner.id, "owner", "owner", current.id, Layer())
+        answer = ChatMessage.objects.filter(is_ai=True).get()
+        self.assertEqual(chat.call_count, 2)
+        self.assertEqual(answer.kind, "text")
+        self.assertIn("No pude convertir tu pedido", answer.content)
+        self.assertNotIn("Propongo relacionarlos", answer.content)
+
+    def test_consulta_adjunta_diagrama_actual(self):
+        async_to_sync(self._diagram_scenario)()
+
+    async def _diagram_scenario(self):
+        client = WebsocketCommunicator(DiagramConsumer.as_asgi(), f"/ws/diagram/{self.project.id}/")
+        client.scope["user"] = self.owner
+        client.scope["url_route"] = {"kwargs": {"diagram_id": str(self.project.id)}}
+        accepted, _ = await client.connect()
+        self.assertTrue(accepted)
+        await client.receive_json_from()
+        diagram = {"nodes": [{"id": "m", "data": {"name": "Medico"}}], "edges": []}
+        with patch("apps.realtime.consumers.enqueue", return_value=None) as enqueue_mock:
+            await client.send_json_to({"type": "chat_message", "content": "@ia revisa Medico",
+                                       "diagram": diagram})
+            await client.receive_json_from()
+            self.assertEqual(enqueue_mock.call_args.kwargs["diagram"], diagram)
+            self.assertEqual(ROOM_DIAGRAMS[f"diagram_{self.project.id}"], diagram)
+        await client.disconnect()
 
     async def _decision_scenario(self, message_id):
         async def connect(user):

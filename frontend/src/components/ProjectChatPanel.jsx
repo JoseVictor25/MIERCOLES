@@ -15,6 +15,8 @@ const PROPOSAL_STATUS = {
 const ACTION_NAMES = {
   add_class: 'Agregar clase', delete_class: 'Eliminar clase', rename_class: 'Renombrar clase',
   add_attribute: 'Agregar atributo', delete_attribute: 'Eliminar atributo',
+  update_attribute: 'Modificar atributo', reorder_attributes: 'Ordenar atributos',
+  set_abstract: 'Cambiar abstracción', add_method: 'Agregar método', delete_method: 'Eliminar método',
   add_relation: 'Agregar relación', delete_relation: 'Eliminar relación',
   update_relation_type: 'Cambiar tipo de relación', set_multiplicity: 'Fijar multiplicidades',
 };
@@ -22,6 +24,9 @@ const ACTION_NAMES = {
 function describeAIUpdate(update) {
   const label = ACTION_NAMES[update.action] || 'Cambio';
   if (update.action === 'rename_class') return `${label}: ${update.name} → ${update.new_name}`;
+  if (update.action === 'reorder_attributes') return `${label}: ${update.class_name} (${(update.order || []).join(', ')})`;
+  if (update.action === 'set_abstract') return `${label}: ${update.name} (${update.is_abstract ? 'abstracta' : 'concreta'})`;
+  if (update.method_name) return `${label}: ${update.class_name}.${update.method_name}`;
   if (update.class_name) return `${label}: ${update.class_name}.${update.attr_name}`;
   if (update.source_class) {
     const pair = `${update.source_class} ↔ ${update.target_class}`;
@@ -294,6 +299,11 @@ export default function ProjectChatPanel({ isOpen, onClose, projectId, userId, c
                   <span>{PROPOSAL_STATUS[message.meta?.status] || 'Pendiente'}</span></div>
                 <ul>{(message.meta?.updates || []).map((update, updateIndex) =>
                   <li key={updateIndex}>{describeAIUpdate(update)}</li>)}</ul>
+                {!!message.meta?.rejected?.length && <div className="project-chat-failures">
+                  <strong>No se pudo proponer:</strong>
+                  <ul>{message.meta.rejected.map((item, rejectedIndex) =>
+                    <li key={rejectedIndex}>{item.code === 'duplicate_attribute' ? 'Atributo omitido: ' : ''}{item.reason}</li>)}</ul>
+                </div>}
                 <div className="project-chat-proposal-status">{proposalStatusText(message, participants)}</div>
                 {message.meta?.status === 'pending' && message.reply_to_user_id === userId && canWrite && <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                   <button className="project-chat-approve" onClick={() => decide(message, 'approve')}>Aprobar</button>

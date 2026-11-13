@@ -11,11 +11,31 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from . import llm
-from .updates import validar_updates
+from .updates import normalizar_updates, validar_updates
 from .views import _build_chat_prompt, _preparar_imagen, _vision_error
 
 
 class AIEndpointsTests(TestCase):
+    def test_normalizacion_y_atributos_omitidos(self):
+        diagram = {"nodes": [
+            {"id": "m", "data": {"name": "Medico", "attributes": [
+                {"id": "a", "name": "nombre"}, {"id": "b", "name": "edad"}]}},
+            {"id": "p", "data": {"name": "Paciente", "attributes": []}}], "edges": []}
+        for alias, expected in [("herencia", "inheritance"), ("hereda", "inheritance"),
+                                ("composición", "composition"), ("realización", "realization"),
+                                ("asociación dirigida", "directed_association")]:
+            update = normalizar_updates([{"action": "add_relation", "source_class": "Medico",
+                                          "target_class": "Paciente", "relation_type": alias}])[0]
+            self.assertEqual(update["relation_type"], expected)
+            self.assertEqual(len(validar_updates(diagram, [update])[0]), 1)
+        valid, rejected = validar_updates(diagram, [{"action": "add_attribute", "class_name": "Medico",
+            "attributes": [{"name": "nombre", "data_type": "String"}, {"name": "licencia", "data_type": "String"}]}])
+        self.assertEqual([item["attr_name"] for item in valid], ["licencia"])
+        self.assertEqual(rejected[0]["code"], "duplicate_attribute")
+        valid, _ = validar_updates(diagram, [{"action": "reorder_attributes", "class_name": "Medico",
+                                              "order": ["edad", "inexistente"]}])
+        self.assertEqual(valid[0]["order"], ["edad", "nombre"])
+
     def setUp(self):
         self.client = APIClient()
         user = get_user_model().objects.create_user(username="tester", password="clave-segura")

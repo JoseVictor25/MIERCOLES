@@ -11,7 +11,7 @@ from channels.db import database_sync_to_async
 from django.db.models import Q
 
 from apps.ai_core import llm
-from apps.ai_core.updates import resumen, validar_updates
+from apps.ai_core.updates import _plain, resumen, validar_updates
 from apps.ai_core.views import _parse_json_safe, serialize_diagram
 from .models import ChatMessage, ProjectAISettings, message_data
 
@@ -22,6 +22,10 @@ ACTION_WORDS = re.compile(r"\b(?:agreg\w*|anad\w*|crea\w*|relacion\w*|conect\w*|
 ADVICE_WORDS = re.compile(r"\b(?:recomend\w*|aconsej\w*|opin\w*|sugier\w*|suger\w*|explic\w*|revis\w*)\b")
 QUESTION_START = re.compile(r"^(?:que|cual|como|por\s+que|donde|cuando|quien)\b")
 PROMISE = re.compile(r"\b(?:propong\w*|voy\s+a|agreg\w*|anad\w*|cambi\w*|orden\w*|cre\w*|elimin\w*|renombr\w*|relacion\w*|conect\w*|hered\w*|modific\w*|aplic\w*)\b", re.IGNORECASE)
+DELETE_ALL = re.compile(
+    r"^\s*(?:elimina|borra|quita|remueve)\s+(?:(?:todos|todas)\s+)?(?:los|las)\s+"
+    r"(atributos|m[eé]todos|relaciones)\s+de\s+(?:la\s+clase\s+)?(.+?)\s*$", re.IGNORECASE)
+EMPTY_CLASS = re.compile(r"^\s*vac[ií]a\s+(?:la\s+clase\s+)?(.+?)\s*$", re.IGNORECASE)
 _STATES = weakref.WeakKeyDictionary()
 logger = logging.getLogger(__name__)
 
@@ -36,6 +40,7 @@ RESPONSE_SCHEMA = {
                     "add_class", "delete_class", "rename_class", "add_attribute", "delete_attribute",
                     "update_attribute", "reorder_attributes", "set_abstract", "add_method", "delete_method",
                     "add_relation", "delete_relation", "update_relation_type", "set_multiplicity",
+                    "clear_attributes", "clear_methods", "delete_relations_of",
                 ]},
                 "name": {"type": "string"}, "new_name": {"type": "string"},
                 "class_name": {"type": "string"}, "attr_name": {"type": "string"},
@@ -72,6 +77,61 @@ def _solo_consejo(content):
                     if unicodedata.category(c) != "Mn").strip().lstrip("¿")
     return not ACTION_WORDS.search(texto) and bool(
         QUESTION_START.search(texto) or ADVICE_WORDS.search(texto) or "?" in texto)
+
+
+def _atajo_borrado(content):
+    """Reconoce únicamente pedidos de vaciado sin atributos concretos nombrados."""
+    match = DELETE_ALL.fullmatch(content)
+    if match:
+        kind = _plain(match.group(1))
+        action = {"atributos": "clear_attributes", "metodos": "clear_methods",
+                  "relaciones": "delete_relations_of"}[kind]
+        name = match.group(2).strip(" .!?")
+        return [{"action": action, "class_name": name}] if name else None
+    match = EMPTY_CLASS.fullmatch(content)
+    if match:
+        name = match.group(1).strip(" .!?")
+        return ([{"action": "clear_attributes", "class_name": name},
+                 {"action": "clear_methods", "class_name": name}] if name else None)
+    return None
+
+
+def _motivo_concreto(diagram, request_text, rejected):
+    """Da prioridad a la causa comprobable sobre una aclaración genérica."""
+    nodes = diagram.get("nodes", []) if isinstance(diagram, dict) else []
+    classes = [node.get("data", {}).get("name", "") for node in nodes]
+    available = ", ".join(classes) or "(ninguna)"
+    for item in rejected:
+        reason = item.get("reason", "")
+        if reason.startswith("La clase ") and reason.endswith(" no existe."):
+            return f"{reason} Clases del diagrama: {available}."
+        if reason.startswith("La clase ") and " no tiene " in reason:
+            return reason
+    match = re.search(r"\b(?:de|en)\s+(?:la\s+clase\s+)?([^,.;!?]+)\s*$", request_text, re.IGNORECASE)
+    if not match:
+        return None
+    asked = match.group(1).strip()
+    node = next((node for node in nodes if _plain(node.get("data", {}).get("name")) == _plain(asked)), None)
+    if node is None:
+        return f"La clase {asked} no existe. Clases del diagrama: {available}."
+    name = node.get("data", {}).get("name", asked)
+    text = _plain(request_text)
+    if "atribut" in text and not node.get("data", {}).get("attributes"):
+        return f"La clase {name} no tiene atributos."
+    if "metod" in text and not node.get("data", {}).get("methods"):
+        return f"La clase {name} no tiene métodos."
+    if "relacion" in text:
+        node_id = str(node.get("id"))
+        edges = diagram.get("edges", [])
+        if not any(node_id in (str(edge.get("source")), str(edge.get("target"))) for edge in edges):
+            return f"La clase {name} no tiene relaciones."
+    return None
+
+
+def _public_updates(valid):
+    """La tarjeta recibe solo acciones que entiende el lienzo."""
+    return [{key: value for key, value in update.items() if not key.startswith("_batch_")}
+            for update in valid]
 
 
 class _QueueState:
@@ -147,6 +207,7 @@ def _prompt(username, role, request_text, diagram, persona, mode, individual, ro
         "update_attribute{class_name,attr_name,new_name?,data_type?,visibility?}; "
         "reorder_attributes{class_name,order:[nombres]}; "
         "add_method{class_name,method_name,return_type?}; delete_method{class_name,method_name}; "
+        "clear_attributes{class_name}; clear_methods{class_name}; delete_relations_of{class_name}; "
         "add_relation{source_class,target_class,relation_type,source_multiplicity?,target_multiplicity?,label?}; "
         "delete_relation{source_class,target_class}; "
         "update_relation_type{source_class,target_class,relation_type}; "
@@ -156,6 +217,8 @@ def _prompt(username, role, request_text, diagram, persona, mode, individual, ro
         "inheritance=herencia; realization=realización; association_class=clase de asociación. "
         "Usa nombres de clases existentes o creadas antes en updates. "
         "En herencia source_class=hija y target_class=padre. Nunca agregues un atributo que ya existe. "
+        "Para eliminar todos los atributos, métodos o relaciones de una clase usa clear_attributes, "
+        "clear_methods o delete_relations_of; no elijas solo algunos. "
         "Preguntas de consejo: responde con updates []. Nunca afirmes que se aplicó un cambio.")
     ejemplos = ("Ejemplos de pedido -> salida JSON:\n"
         "¿Qué clases faltan? -> {\"reply\":\"Revisa responsabilidades.\",\"updates\":[]}\n"
@@ -164,7 +227,8 @@ def _prompt(username, role, request_text, diagram, persona, mode, individual, ro
         "Composición A-B -> {\"reply\":\"Propongo composición.\",\"updates\":[{\"action\":\"add_relation\",\"source_class\":\"A\",\"target_class\":\"B\",\"relation_type\":\"composition\"}]}\n"
         "Realización A-B -> {\"reply\":\"Propongo realización.\",\"updates\":[{\"action\":\"add_relation\",\"source_class\":\"A\",\"target_class\":\"B\",\"relation_type\":\"realization\"}]}\n"
         "Agrega edad:int y nombre:String a A -> {\"reply\":\"Propongo atributos.\",\"updates\":[{\"action\":\"add_attribute\",\"class_name\":\"A\",\"attr_name\":\"edad\",\"data_type\":\"int\"},{\"action\":\"add_attribute\",\"class_name\":\"A\",\"attr_name\":\"nombre\",\"data_type\":\"String\"}]}\n"
-        "Ordena atributos de A: nombre, edad -> {\"reply\":\"Propongo orden.\",\"updates\":[{\"action\":\"reorder_attributes\",\"class_name\":\"A\",\"order\":[\"nombre\",\"edad\"]}]}") if mode == "proposer" else ""
+        "Ordena atributos de A: nombre, edad -> {\"reply\":\"Propongo orden.\",\"updates\":[{\"action\":\"reorder_attributes\",\"class_name\":\"A\",\"order\":[\"nombre\",\"edad\"]}]}\n"
+        "Elimina todos los atributos de A -> {\"reply\":\"Propongo vaciar atributos.\",\"updates\":[{\"action\":\"clear_attributes\",\"class_name\":\"A\"}]}") if mode == "proposer" else ""
     sections = [
         f"Eres Asistente IA. {persona_text} Responde en español, máximo 6 líneas. "
         'Devuelve SOLO JSON válido con "reply" y "updates". Claves y textos siempre entre comillas dobles. ' + reglas,
@@ -195,7 +259,25 @@ async def _answer(project_id, user_id, username, role, message_id, layer, diagra
     current = next((m for m in room if m.id == message_id), None)
     if current is None:
         current = await _message(message_id)
-    prompt = _prompt(username, role, without_mention(current.content), diagram, persona, mode, individual, room)
+    request_text = without_mention(current.content)
+    shortcut = _atajo_borrado(request_text)
+    if shortcut is not None:
+        if mode == "advisor":
+            content, kind, meta = "En modo asesor no se aplicaron cambios al lienzo.", "text", {}
+        else:
+            valid, rejected = validar_updates(diagram, shortcut)
+            if valid:
+                content = resumen(valid, rejected)
+                kind = "proposal"
+                meta = {"status": "pending", "requested_by": user_id, "updates": _public_updates(valid),
+                        "rejected": rejected, "summary": content}
+            else:
+                content = _motivo_concreto(diagram, request_text, rejected) or resumen(valid, rejected)
+                kind, meta = "text", {}
+        message = await _save_ai_message(project_id, user_id, content, kind, meta)
+        await layer.group_send(f"diagram_{project_id}", {"type": "broadcast_chat_message", "message": message})
+        return
+    prompt = _prompt(username, role, request_text, diagram, persona, mode, individual, room)
     messages = [{"role": "user", "content": prompt}]
     raw = await asyncio.to_thread(llm.chat, messages, temperature=0, response_schema=RESPONSE_SCHEMA)
     try:
@@ -215,7 +297,8 @@ async def _answer(project_id, user_id, username, role, message_id, layer, diagra
             if reply:
                 if (mode == "proposer" and not _solo_consejo(without_mention(current.content))
                         and PROMISE.search(reply)):
-                    reply = ("No pude convertir tu pedido en un cambio concreto. Indica la clase y la acción, "
+                    reply = (_motivo_concreto(diagram, request_text, []) or
+                             "No pude convertir tu pedido en un cambio concreto. Indica la clase y la acción, "
                              "por ejemplo: @ia relaciona Medico con Paciente con asociación 1 a *")
                 message = await _save_ai_message(project_id, user_id, reply, "text", {})
             else:
@@ -248,7 +331,8 @@ async def _answer(project_id, user_id, username, role, message_id, layer, diagra
             except llm.LLMBadOutput:
                 logger.exception("Reintento sin acciones tipo=LLMBadOutput respuesta_cruda=%r", corrected[:800])
             if not valid:
-                parsed["reply"] = ("No pude convertir tu pedido en un cambio concreto. Indica la clase y la acción, "
+                parsed["reply"] = (_motivo_concreto(diagram, request_text, rejected) or
+                                   "No pude convertir tu pedido en un cambio concreto. Indica la clase y la acción, "
                                    "por ejemplo: @ia relaciona Medico con Paciente con asociación 1 a *")
                 rejected = []
     if mode == "advisor":
@@ -257,11 +341,13 @@ async def _answer(project_id, user_id, username, role, message_id, layer, diagra
     if valid:
         summary = resumen(valid, rejected)
         content = summary
-        meta = {"status": "pending", "requested_by": user_id, "updates": valid,
+        meta = {"status": "pending", "requested_by": user_id, "updates": _public_updates(valid),
                 "rejected": rejected, "summary": summary}
         kind = "proposal"
     else:
+        specific = _motivo_concreto(diagram, request_text, rejected) if mode == "proposer" else None
         content = ("En modo asesor no se aplicaron cambios al lienzo." if mode == "advisor" and updates
+                   else specific if specific
                    else "No pude proponer cambios: " + "; ".join(item["reason"] for item in rejected)
                    if rejected else str(parsed.get("reply") or "No tengo una respuesta por ahora.")[:1000])
         meta, kind = {}, "text"

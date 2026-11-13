@@ -4,7 +4,8 @@ from asgiref.sync import async_to_sync
 import asyncio
 import io
 import tempfile
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
 from channels.testing import WebsocketCommunicator
 from django.contrib.auth import get_user_model
 from django.test import TransactionTestCase, override_settings
@@ -20,6 +21,82 @@ from .decisions import decide, record_result
 
 
 class ChatTests(TransactionTestCase):
+    def _diagram_for_clearing(self, attributes=True):
+        diagram = {"nodes": [
+            {"id": "m", "data": {"name": "Médico", "attributes":
+                ([{"name": "id"}, {"name": "especialidad"}, {"name": "consultorio_id"}]
+                 if attributes else []), "methods": [{"name": "atender"}]}},
+            {"id": "p", "data": {"name": "Paciente", "attributes": [], "methods": []}}],
+            "edges": []}
+        self.project.datos_diagrama = diagram
+        self.project.save(update_fields=["datos_diagrama"])
+        return diagram
+
+    def _ask_to_clear(self, content):
+        current = ChatMessage.objects.create(project=self.project, author=self.owner, content=content)
+        layer = SimpleNamespace(group_send=AsyncMock())
+        async_to_sync(_answer)(self.project.id, self.owner.id, "owner", "owner", current.id, layer)
+        return ChatMessage.objects.filter(is_ai=True).latest("id")
+
+    def test_atajo_elimina_tres_atributos_sin_modelo_y_acepta_tildes(self):
+        ProjectAISettings.objects.create(project=self.project, mode="proposer")
+        self._diagram_for_clearing()
+        with patch("apps.chat.ai_worker.llm.chat") as chat:
+            for content in ("@ia elimina todos los atributos de medico",
+                            "@ia elimina los atributos de Médico"):
+                answer = self._ask_to_clear(content)
+                self.assertEqual(answer.kind, "proposal")
+                self.assertEqual([item["attr_name"] for item in answer.meta["updates"]],
+                                 ["id", "especialidad", "consultorio_id"])
+                self.assertTrue(all(set(item) == {"action", "class_name", "attr_name"}
+                                    for item in answer.meta["updates"]))
+                self.assertIn("eliminar todos los atributos de Médico (3)", answer.content)
+            emptied = self._ask_to_clear("@ia vacía la clase Médico")
+            self.assertEqual(emptied.kind, "proposal")
+            self.assertEqual(len(emptied.meta["updates"]), 4)
+            chat.assert_not_called()
+
+    def test_nombres_concretos_usan_modelo_y_compuesta_del_modelo_se_expande(self):
+        ProjectAISettings.objects.create(project=self.project, mode="proposer")
+        self._diagram_for_clearing()
+        named = '{"reply":"Propongo borrar id","updates":[{"action":"delete_attribute","class_name":"Médico","attr_name":"id"}]}'
+        compound = '{"reply":"Propongo vaciar","updates":[{"action":"clear_attributes","class_name":"medico"}]}'
+        with patch("apps.chat.ai_worker.llm.chat", side_effect=[named, compound]) as chat:
+            answer = self._ask_to_clear("@ia elimina id y especialidad de Medico")
+            self.assertEqual(answer.kind, "proposal")
+            self.assertEqual(len(answer.meta["updates"]), 1)
+            answer = self._ask_to_clear("@ia quita cuanto sea posible de Medico")
+            self.assertEqual(len(answer.meta["updates"]), 3)
+            self.assertEqual(chat.call_count, 2)
+
+    def test_atajo_clase_vacia_inexistente_y_modo_asesor(self):
+        settings = ProjectAISettings.objects.create(project=self.project, mode="proposer")
+        self._diagram_for_clearing(attributes=False)
+        with patch("apps.chat.ai_worker.llm.chat") as chat:
+            empty = self._ask_to_clear("@ia borra los atributos de Medico")
+            self.assertEqual(empty.kind, "text")
+            self.assertEqual(empty.content, "La clase Médico no tiene atributos.")
+            missing = self._ask_to_clear("@ia elimina todos los atributos de Fantasma")
+            self.assertEqual(missing.kind, "text")
+            self.assertIn("La clase Fantasma no existe. Clases del diagrama: Médico, Paciente.", missing.content)
+            settings.mode = "advisor"
+            settings.save(update_fields=["mode"])
+            advisor = self._ask_to_clear("@ia elimina los atributos de Médico")
+            self.assertEqual(advisor.kind, "text")
+            self.assertEqual(advisor.content, "En modo asesor no se aplicaron cambios al lienzo.")
+            chat.assert_not_called()
+
+    def test_reintento_sin_acciones_explicita_clase_vacia_o_inexistente(self):
+        ProjectAISettings.objects.create(project=self.project, mode="proposer")
+        self._diagram_for_clearing(attributes=False)
+        response = '{"reply":"Propongo borrar atributos","updates":[]}'
+        with patch("apps.chat.ai_worker.llm.chat", side_effect=[response] * 4) as chat:
+            empty = self._ask_to_clear("@ia remueve cada atributo de Medico")
+            self.assertEqual(empty.content, "La clase Médico no tiene atributos.")
+            missing = self._ask_to_clear("@ia cambia atributos de Fantasma")
+            self.assertIn("La clase Fantasma no existe. Clases del diagrama: Médico, Paciente.", missing.content)
+            self.assertEqual(chat.call_count, 4)
+
     def setUp(self):
         ROOM_DIAGRAMS.clear()
         user_model = get_user_model()

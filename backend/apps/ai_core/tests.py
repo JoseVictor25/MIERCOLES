@@ -11,11 +11,47 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from . import llm
-from .updates import normalizar_updates, validar_updates
+from .updates import normalizar_updates, validar_updates, resumen
 from .views import _build_chat_prompt, _preparar_imagen, _vision_error
 
 
 class AIEndpointsTests(TestCase):
+    def test_acciones_compuestas_se_expanden_y_explican_vacios(self):
+        diagram = {"nodes": [
+            {"id": "m", "data": {"name": "Médico", "attributes": [
+                {"name": "id"}, {"name": "especialidad"}, {"name": "consultorio_id"}],
+                "methods": [{"name": "atender"}]}},
+            {"id": "p", "data": {"name": "Paciente", "attributes": [], "methods": []}}],
+            "edges": [{"source": "m", "target": "p"}]}
+        valid, rejected = validar_updates(diagram, [{"action": "clear_attributes", "class_name": "medico"}])
+        self.assertFalse(rejected)
+        self.assertEqual([item["attr_name"] for item in valid], ["id", "especialidad", "consultorio_id"])
+        self.assertTrue(all(item["class_name"] == "Médico" for item in valid))
+        self.assertIn("eliminar todos los atributos de Médico (3)", resumen(valid, rejected))
+        valid, rejected = validar_updates(diagram, [
+            {"action": "clear_methods", "class_name": "MEDICO"},
+            {"action": "delete_relations_of", "class_name": "médico"}])
+        self.assertFalse(rejected)
+        self.assertEqual([item["action"] for item in valid], ["delete_method", "delete_relation"])
+        duplicated = {**diagram, "edges": diagram["edges"] * 2}
+        valid, _ = validar_updates(duplicated, [{"action": "delete_relations_of", "class_name": "Médico"}])
+        self.assertEqual(len(valid), 2)
+        for action, kind in [("clear_attributes", "atributos"), ("clear_methods", "métodos"),
+                             ("delete_relations_of", "relaciones")]:
+            empty_diagram = {**diagram, "edges": []}
+            valid, rejected = validar_updates(empty_diagram, [{"action": action, "class_name": "Paciente"}])
+            self.assertFalse(valid)
+            self.assertEqual(rejected[0]["reason"], f"La clase Paciente no tiene {kind}.")
+        valid, rejected = validar_updates(diagram, [{"action": "clear_attributes", "class_name": "Otro"}])
+        self.assertFalse(valid)
+        self.assertEqual(rejected[0]["reason"], "La clase Otro no existe.")
+        valid, rejected = validar_updates(diagram, [
+            {"action": "rename_class", "name": "medico", "new_name": "Doctor"},
+            {"action": "clear_attributes", "class_name": "doctor"}])
+        self.assertFalse(rejected)
+        self.assertEqual(valid[0]["name"], "Médico")
+        self.assertEqual(valid[1]["class_name"], "Doctor")
+
     def test_normalizacion_y_atributos_omitidos(self):
         diagram = {"nodes": [
             {"id": "m", "data": {"name": "Medico", "attributes": [

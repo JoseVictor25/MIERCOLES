@@ -10,6 +10,8 @@ CAMPOS = {
     "delete_attribute": ("class_name", "attr_name"), "update_attribute": ("class_name", "attr_name"),
     "reorder_attributes": ("class_name",), "add_method": ("class_name", "method_name"),
     "delete_method": ("class_name", "method_name"), "add_relation": ("source_class", "target_class"),
+    "clear_attributes": ("class_name",), "clear_methods": ("class_name",),
+    "delete_relations_of": ("class_name",),
     "delete_relation": ("source_class", "target_class"),
     "update_relation_type": ("source_class", "target_class", "relation_type"),
     "set_multiplicity": ("source_class", "target_class", "source_multiplicity", "target_multiplicity"),
@@ -84,15 +86,15 @@ def validar_updates(diagram, updates):
     """Acepta acciones secuenciales y explica cada descarte sin perder las válidas."""
     nodes = diagram.get("nodes", []) if isinstance(diagram, dict) else []
     edges = diagram.get("edges", []) if isinstance(diagram, dict) else []
-    names = {n.get("data", {}).get("name", "").casefold(): n.get("data", {}).get("name", "") for n in nodes}
-    ids = {str(n.get("id")): n.get("data", {}).get("name", "").casefold() for n in nodes}
+    names = {_plain(n.get("data", {}).get("name", "")): n.get("data", {}).get("name", "") for n in nodes}
+    ids = {str(n.get("id")): _plain(n.get("data", {}).get("name", "")) for n in nodes}
     relations = {frozenset((ids.get(str(e.get("source"))), ids.get(str(e.get("target")))))
                  for e in edges if ids.get(str(e.get("source"))) and ids.get(str(e.get("target")))}
-    attrs = {n.get("data", {}).get("name", "").casefold():
+    attrs = {_plain(n.get("data", {}).get("name", "")):
              [a.get("name", "") for a in n.get("data", {}).get("attributes", [])] for n in nodes}
-    methods = {n.get("data", {}).get("name", "").casefold():
+    methods = {_plain(n.get("data", {}).get("name", "")):
                [m.get("name", "") for m in n.get("data", {}).get("methods", [])] for n in nodes}
-    abstract = {n.get("data", {}).get("name", "").casefold(): bool(n.get("data", {}).get("is_abstract")) for n in nodes}
+    abstract = {_plain(n.get("data", {}).get("name", "")): bool(n.get("data", {}).get("is_abstract")) for n in nodes}
     valid, rejected = [], []
     for update in normalizar_updates(updates):
         reason = code = None
@@ -105,13 +107,59 @@ def validar_updates(diagram, updates):
             if missing:
                 reason = f"Faltan campos: {', '.join(missing)}."
             else:
-                name = str(update.get("name", "")).casefold()
-                cls = str(update.get("class_name", "")).casefold()
-                src = str(update.get("source_class", "")).casefold()
-                tgt = str(update.get("target_class", "")).casefold()
+                name = _plain(update.get("name", ""))
+                cls = _plain(update.get("class_name", ""))
+                src = _plain(update.get("source_class", ""))
+                tgt = _plain(update.get("target_class", ""))
                 pair = frozenset((src, tgt))
                 attr_name = str(update.get("attr_name", "")).casefold()
                 method_name = str(update.get("method_name", "")).casefold()
+                if action != "add_class" and name in names:
+                    update["name"] = names[name]
+                if cls in names:
+                    update["class_name"] = names[cls]
+                if src in names:
+                    update["source_class"] = names[src]
+                if tgt in names:
+                    update["target_class"] = names[tgt]
+                if action in ("clear_attributes", "clear_methods", "delete_relations_of"):
+                    if cls not in names:
+                        reason = f"La clase {update['class_name']} no existe."
+                    else:
+                        class_name = names[cls]
+                        if action == "clear_attributes":
+                            targets = [{"action": "delete_attribute", "class_name": class_name,
+                                        "attr_name": item} for item in attrs[cls]]
+                            kind = "atributos"
+                            attrs[cls] = []
+                        elif action == "clear_methods":
+                            targets = [{"action": "delete_method", "class_name": class_name,
+                                        "method_name": item} for item in methods[cls]]
+                            kind = "métodos"
+                            methods[cls] = []
+                        else:
+                            connected = []
+                            for edge in edges:
+                                source = ids.get(str(edge.get("source")))
+                                target = ids.get(str(edge.get("target")))
+                                if (source and target and cls in (source, target) and
+                                        frozenset((source, target)) in relations):
+                                    connected.append((source, target))
+                            targets = [{"action": "delete_relation", "source_class": class_name,
+                                        "target_class": names[target if source == cls else source]}
+                                       for source, target in connected]
+                            kind = "relaciones"
+                            relations.difference_update(frozenset(pair) for pair in connected)
+                        if not targets:
+                            reason = f"La clase {class_name} no tiene {kind}."
+                        else:
+                            for target in targets:
+                                target["_batch_action"] = action
+                                target["_batch_class"] = class_name
+                                valid.append(target)
+                    if reason:
+                        rejected.append({"update": update, "reason": reason})
+                    continue
                 if action == "add_class":
                     if name in names:
                         reason = f"La clase {update['name']} ya existe."
@@ -128,7 +176,7 @@ def validar_updates(diagram, updates):
                         abstract.pop(name, None)
                         relations = {r for r in relations if name not in r}
                     elif action == "rename_class":
-                        new = update["new_name"].casefold()
+                        new = _plain(update["new_name"])
                         if new in names:
                             reason = f"La clase {update['new_name']} ya existe."
                         else:
@@ -138,6 +186,7 @@ def validar_updates(diagram, updates):
                             methods[new] = methods.pop(name, [])
                             abstract[new] = abstract.pop(name, False)
                             relations = {frozenset(new if part == name else part for part in r) for r in relations}
+                            ids = {node_id: new if old == name else old for node_id, old in ids.items()}
                     elif not isinstance(update.get("is_abstract"), bool):
                         reason = "is_abstract debe ser verdadero o falso."
                     elif abstract[name] == update["is_abstract"]:
@@ -231,7 +280,19 @@ def resumen(valid, rejected, consejo=""):
                "add_method": "agregar método", "delete_method": "eliminar método", "set_abstract": "cambiar abstracción de",
                "add_relation": "agregar relación", "delete_relation": "eliminar relación",
                "update_relation_type": "cambiar tipo de relación", "set_multiplicity": "fijar multiplicidades"}
-    parts = [f"{nombres[u['action']]} {u.get('name') or u.get('attr_name') or u.get('method_name') or u.get('class_name') or (u.get('source_class', '') + '-' + u.get('target_class', ''))}" for u in valid]
+    compuestas = {"clear_attributes": "atributos", "clear_methods": "métodos",
+                  "delete_relations_of": "relaciones"}
+    parts, vistos = [], set()
+    for update in valid:
+        batch = update.get("_batch_action")
+        if batch in compuestas:
+            key = (batch, update.get("_batch_class"))
+            if key not in vistos:
+                count = sum(1 for item in valid if (item.get("_batch_action"), item.get("_batch_class")) == key)
+                parts.append(f"eliminar todos los {compuestas[batch]} de {key[1]} ({count})")
+                vistos.add(key)
+        else:
+            parts.append(f"{nombres[update['action']]} {update.get('name') or update.get('attr_name') or update.get('method_name') or update.get('class_name') or (update.get('source_class', '') + '-' + update.get('target_class', ''))}")
     omitted = [item for item in rejected if item.get("code") == "duplicate_attribute"]
     other = [item for item in rejected if item.get("code") != "duplicate_attribute"]
     if parts:
